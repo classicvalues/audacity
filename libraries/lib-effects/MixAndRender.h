@@ -36,16 +36,16 @@ class WaveTrackFactory;
  *
  * @param newTrackName used only when there is more than one input track (one
  * mono channel or a stereo pair); else the unique track's name is copied
+ *
+ * @pre `trackRange` iterates over leaders only
  */
-void EFFECTS_API MixAndRender(
+EFFECTS_API TrackListHolder MixAndRender(
    const TrackIterRange<const WaveTrack> &trackRange,
    const Mixer::WarpOptions &warpOptions,
    const wxString &newTrackName,
    WaveTrackFactory *factory,
    double rate, sampleFormat format,
-   double startTime, double endTime,
-   std::shared_ptr<WaveTrack> &uLeft,
-   std::shared_ptr<WaveTrack> &uRight);
+   double startTime, double endTime);
 
 enum ChannelName : int;
 using ChannelNames = const ChannelName *;

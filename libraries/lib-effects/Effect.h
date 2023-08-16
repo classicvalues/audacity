@@ -108,8 +108,6 @@ class EFFECTS_API Effect /* not final */
    bool Delegate(Effect &delegate, EffectSettings &settings,
       InstanceFinder finder = {});
 
-   static void IncEffectCounter(){ nEffectsDone++;}
-
 protected:
 
    //! Default implementation returns false
@@ -142,17 +140,10 @@ protected:
    int GetNumWaveGroups() const { return mNumGroups; }
 
    // Calculates the start time and length in samples for one or two channels
-   void GetBounds(
-      const WaveTrack &track, const WaveTrack *pRight,
-      sampleCount *start, sampleCount *len);
-
-   // Use this method to copy the input tracks to mOutputTracks, if
-   // doing the processing on them, and replacing the originals only on success (and not cancel).
-   // If not all sync-locked selected, then only selected wave tracks.
-   void CopyInputTracks(bool allSyncLockSelected = false);
-
-   // Use this to append a NEW output track.
-   Track *AddToOutputTracks(const std::shared_ptr<Track> &t);
+   /*!
+    @pre `track.IsLeader()`
+    */
+   void GetBounds(const WaveTrack &track, sampleCount *start, sampleCount *len);
 
 private:
    wxString GetSavedStateGroup();

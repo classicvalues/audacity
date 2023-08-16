@@ -14,7 +14,7 @@
 
 #include "../../../ui/AffordanceHandle.h"
 #include "../../../ui/SelectHandle.h"
-#include "../../../ui/TrackView.h"
+#include "../../../ui/ChannelView.h"
 #include "AllThemeResources.h"
 #include "AColor.h"
 #include "../../../../NoteTrack.h"
@@ -58,7 +58,7 @@ public:
 };
 
 NoteTrackAffordanceControls::NoteTrackAffordanceControls(const std::shared_ptr<Track>& pTrack)
-    : CommonTrackCell(pTrack)
+    : CommonTrackCell{ pTrack, 0 }
 {
 
 }
@@ -67,14 +67,14 @@ std::vector<UIHandlePtr> NoteTrackAffordanceControls::HitTest(const TrackPanelMo
 {
     std::vector<UIHandlePtr> results;
 
-    auto track = FindTrack();
+    auto track = std::static_pointer_cast<NoteTrack>(FindTrack());
     const auto nt = std::static_pointer_cast<const NoteTrack>(track->SubstitutePendingChangedTrack());
 
     const auto rect = state.rect;
 
     auto& zoomInfo = ViewInfo::Get(*pProject);
-    auto left = zoomInfo.TimeToPosition(nt->GetOffset(), rect.x);
-    auto right = zoomInfo.TimeToPosition(nt->GetOffset() + nt->GetSeq().get_real_dur(), rect.x);
+    auto left = zoomInfo.TimeToPosition(nt->GetStartTime(), rect.x);
+    auto right = zoomInfo.TimeToPosition(nt->GetStartTime() + nt->GetSeq().get_real_dur(), rect.x);
     auto headerRect = wxRect(left, rect.y, right - left, rect.height);
 
     auto px = state.state.m_x;
@@ -93,7 +93,7 @@ std::vector<UIHandlePtr> NoteTrackAffordanceControls::HitTest(const TrackPanelMo
         results.push_back(
             SelectHandle::HitTest(
                 mSelectHandle, state, pProject,
-                TrackView::Get(*track).shared_from_this()
+                ChannelView::Get(*track).shared_from_this()
             )
         );
     }
@@ -110,8 +110,8 @@ void NoteTrackAffordanceControls::Draw(TrackPanelDrawingContext& context, const 
         TrackArt::DrawBackgroundWithSelection(context, rect, nt.get(), AColor::labelSelectedBrush, AColor::labelUnselectedBrush);
 
         const auto& zoomInfo = *artist->pZoomInfo;
-        auto left = zoomInfo.TimeToPosition(nt->GetOffset(), rect.x);
-        auto right = zoomInfo.TimeToPosition(nt->GetOffset() + nt->GetSeq().get_real_dur(), rect.x);
+        auto left = zoomInfo.TimeToPosition(nt->GetStartTime(), rect.x);
+        auto right = zoomInfo.TimeToPosition(nt->GetStartTime() + nt->GetSeq().get_real_dur(), rect.x);
         auto clipRect = wxRect(left, rect.y, right - left + 1, rect.height);
 
         auto px = context.lastState.m_x;

@@ -24,6 +24,8 @@ set( SOURCES
    Callable.h
    CommandLineArgs.cpp
    CommandLineArgs.h
+   Composite.cpp
+   Composite.h
    GlobalVariable.h
    MemoryX.cpp
    MemoryX.h
@@ -43,6 +45,8 @@ set( SOURCES
    TypeList.cpp
    TypeList.h
    TypeListVisitor.h
+   TypeSwitch.cpp
+   TypeSwitch.h
    TypedAny.h
    Variant.cpp
    Variant.h

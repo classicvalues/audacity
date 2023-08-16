@@ -23,6 +23,8 @@ class wxFileName;
 class wxCheckBox;
 class wxTextCtrl;
 
+class EffectOutputTracks;
+
 #define NYQUISTEFFECTS_VERSION wxT("1.0.0.0")
 
 enum NyqControlType
@@ -120,7 +122,7 @@ public:
 
    bool Init() override;
    bool Process(EffectInstance &instance, EffectSettings &settings) override;
-   int ShowHostInterface(EffectPlugin &plugin, wxWindow &parent,
+   int ShowHostInterface(EffectBase &plugin, wxWindow &parent,
       const EffectDialogFactory &factory,
       std::shared_ptr<EffectInstance> &pInstance, EffectSettingsAccess &access,
       bool forceModal = false) override;
@@ -144,7 +146,7 @@ private:
    static int mReentryCount;
    // NyquistEffect implementation
 
-   bool ProcessOne();
+   bool ProcessOne(EffectOutputTracks *pOutputs);
 
    void BuildPromptWindow(ShuttleGui & S);
    void BuildEffectWindow(ShuttleGui & S);

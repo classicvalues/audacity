@@ -14,6 +14,7 @@
 #include "Effect.h"
 #include "StatefulEffectUIServices.h"
 #include "EffectEditor.h"
+#include "EffectPreview.h"
 
 #include "AllThemeResources.h"
 #include "widgets/BasicMenu.h"
@@ -223,7 +224,7 @@ bool EffectSettingsAccessTee::IsSameAs(
 }
 
 EffectUIHost::EffectUIHost(wxWindow *parent,
-   AudacityProject &project, EffectPlugin &effect,
+   AudacityProject &project, EffectBase &effect,
    EffectUIServices &client, std::shared_ptr<EffectInstance> &pInstance,
    EffectSettingsAccess &access,
    const std::shared_ptr<RealtimeEffectState> &pPriorState)
@@ -753,7 +754,7 @@ void EffectUIHost::OnPlay(wxCommandEvent & WXUNUSED(evt))
       return;
    
    auto updater = [this]{ TransferDataToWindow(); };
-   mEffectUIHost.Preview(*mpAccess, updater, false);
+   EffectPreview(mEffectUIHost, *mpAccess, updater, false);
    // After restoration of settings and effect state:
    // In case any dialog control depends on mT1 or mDuration:
    updater();
@@ -1102,7 +1103,7 @@ void EffectUIHost::CleanupRealtime()
 }
 
 DialogFactoryResults EffectUI::DialogFactory(wxWindow &parent,
-   EffectPlugin &host, EffectUIServices &client,
+   EffectBase &host, EffectUIServices &client,
    EffectSettingsAccess &access)
 {
    // Make sure there is an associated project, whose lifetime will
@@ -1178,7 +1179,7 @@ DialogFactoryResults EffectUI::DialogFactory(wxWindow &parent,
       }
    }
 
-   auto nTracksOriginally = tracks.size();
+   auto nTracksOriginally = tracks.Size();
    wxWindow *focus = wxWindow::FindFocus();
    wxWindow *parent = nullptr;
    if (focus != nullptr) {
@@ -1197,13 +1198,10 @@ DialogFactoryResults EffectUI::DialogFactory(wxWindow &parent,
 
    } );
 
-   int count = 0;
-   bool clean = true;
-   for (auto t : tracks.Selected< const WaveTrack >()) {
-      if (t->GetEndTime() != 0.0)
-         clean = false;
-      count++;
-   }
+   const auto range = tracks.Selected<const WaveTrack>();
+   bool anyTracks = !range.empty();
+   bool clean = std::all_of(range.begin(), range.end(),
+      [](const WaveTrack *t){ return t->GetEndTime() == 0; });
 
    EffectManager & em = EffectManager::Get();
 
@@ -1219,7 +1217,7 @@ DialogFactoryResults EffectUI::DialogFactory(wxWindow &parent,
          {
             // Prompting will be bypassed when applying an effect that has
             // already been configured, e.g. repeating the last effect on a
-            // different selection.  Prompting may call EffectBase::Preview
+            // different selection.  Prompting may call EffectPreview
             std::shared_ptr<EffectInstance> pInstance;
             std::shared_ptr<EffectInstanceEx> pInstanceEx;
             if ((flags & EffectManager::kConfigured) == 0 && pAccess) {
@@ -1308,7 +1306,7 @@ DialogFactoryResults EffectUI::DialogFactory(wxWindow &parent,
    //mchinen:12/14/08 reapplying for generate effects
    if (type == EffectTypeGenerate)
    {
-      if (count == 0 || (clean && selectedRegion.t0() == 0.0))
+      if (!anyTracks || (clean && selectedRegion.t0() == 0.0))
          window.DoZoomFit();
          //  trackPanel->Refresh(false);
    }
@@ -1324,14 +1322,14 @@ DialogFactoryResults EffectUI::DialogFactory(wxWindow &parent,
    // New tracks added?  Scroll them into view so that user sees them.
    // Don't care what track type.  An analyser might just have added a
    // Label track and we want to see it.
-   if( tracks.size() > nTracksOriginally ){
+   if (tracks.Size() > nTracksOriginally) {
       // 0.0 is min scroll position, 1.0 is max scroll position.
       trackPanel.VerticalScroll( 1.0 );
    }
    else {
       auto pTrack = *tracks.Selected().begin();
       if (!pTrack)
-         pTrack = *tracks.Any().begin();
+         pTrack = *tracks.begin();
       if (pTrack) {
          TrackFocus::Get(project).Set(pTrack);
          pTrack->EnsureVisible();

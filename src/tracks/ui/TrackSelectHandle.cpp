@@ -11,7 +11,7 @@ Paul Licameli split from TrackPanel.cpp
 
 #include "TrackSelectHandle.h"
 
-#include "TrackView.h"
+#include "ChannelView.h"
 #include "../../HitTestResult.h"
 #include "Project.h"
 #include "ProjectAudioIO.h"
@@ -100,7 +100,7 @@ UIHandle::Result TrackSelectHandle::Click
    }
 
    SelectUtilities::DoListSelection(*pProject,
-      pTrack.get(), event.ShiftDown(), event.ControlDown(), !unsafe);
+      *pTrack, event.ShiftDown(), event.ControlDown(), !unsafe);
 
    mClicked = true;
    return result;
@@ -156,12 +156,12 @@ HitTestPreview TrackSelectHandle::Preview
    //static auto clickedCursor =
    //   ::MakeCursor(wxCURSOR_HAND, RearrangingCursorXpm, 16, 16);
 
-   const auto trackCount = TrackList::Get( *project ).Leaders().size();
+   const auto trackCount = TrackList::Get( *project ).Any().size();
    auto message = Message(trackCount);
    if (mClicked) {
       const bool unsafe =
          ProjectAudioIO::Get( *project ).IsAudioActive();
-      const bool canMove = TrackList::Get( *project ).Leaders().size() > 1;
+      const bool canMove = TrackList::Get( *project ).Any().size() > 1;
       return {
          message,
          (unsafe
@@ -226,16 +226,16 @@ void TrackSelectHandle::CalculateRearrangingThresholds(
    if (tracks.CanMoveUp(mpTrack.get()))
       mMoveUpThreshold =
          event.m_y -
-            TrackView::GetChannelGroupHeight(
-               * -- tracks.FindLeader( mpTrack.get() ) );
+            ChannelView::GetChannelGroupHeight(
+               * -- tracks.Find(mpTrack.get()));
    else
       mMoveUpThreshold = INT_MIN;
 
    if (tracks.CanMoveDown(mpTrack.get()))
       mMoveDownThreshold =
          event.m_y +
-            TrackView::GetChannelGroupHeight(
-               * ++ tracks.FindLeader( mpTrack.get() ) );
+            ChannelView::GetChannelGroupHeight(
+               * ++ tracks.Find(mpTrack.get()));
    else
       mMoveDownThreshold = INT_MAX;
 }

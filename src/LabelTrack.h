@@ -82,7 +82,7 @@ public:
 using LabelArray = std::vector<LabelStruct>;
 
 class AUDACITY_DLL_API LabelTrack final
-   : public Track
+   : public UniqueChannelTrack<>
    , public Observer::Publisher<struct LabelTrackEvent>
 {
  public:
@@ -110,28 +110,27 @@ class AUDACITY_DLL_API LabelTrack final
 
    void SetLabel( size_t iLabel, const LabelStruct &newLabel );
 
-   void SetOffset(double dOffset) override;
+   void MoveTo(double dOffset) override;
 
    void SetSelected(bool s) override;
-
-   double GetOffset() const override;
-   double GetStartTime() const override;
-   double GetEndTime() const override;
 
    using Holder = std::shared_ptr<LabelTrack>;
 
 private:
-   Track::Holder Clone() const override;
+   TrackListHolder Clone() const override;
+   void DoOnProjectTempoChange(
+      const std::optional<double>& oldTempo, double newTempo) override;
 
 public:
    bool HandleXMLTag(const std::string_view& tag, const AttributesList& attrs) override;
    XMLTagHandler *HandleXMLChild(const std::string_view& tag) override;
    void WriteXML(XMLWriter &xmlFile) const override;
 
-   Track::Holder Cut  (double t0, double t1) override;
-   Track::Holder Copy (double t0, double t1, bool forClipboard = true) const override;
+   TrackListHolder Cut(double t0, double t1) override;
+   TrackListHolder Copy(double t0, double t1, bool forClipboard = true)
+      const override;
    void Clear(double t0, double t1) override;
-   void Paste(double t, const Track * src) override;
+   void Paste(double t, const Track &src) override;
    bool Repeat(double t0, double t1, int n);
    void SyncLockAdjust(double oldT1, double newT1) override;
 
@@ -153,7 +152,7 @@ public:
    void DeleteLabel(int index);
 
    // This pastes labels without shifting existing ones
-   bool PasteOver(double t, const Track *src);
+   bool PasteOver(double t, const Track &src);
 
    // PRL:  These functions were not used because they were not overrides!  Was that right?
    //Track::Holder SplitCut(double b, double e) /* not override */;
@@ -174,21 +173,32 @@ public:
    const TypeInfo &GetTypeInfo() const override;
    static const TypeInfo &ClassTypeInfo();
 
-   Track::Holder PasteInto( AudacityProject & ) const override;
+   Track::Holder PasteInto(AudacityProject &project, TrackList &list)
+      const override;
 
-   struct IntervalData final : Track::IntervalData {
+   struct Interval final : WideChannelGroupInterval {
+      Interval(const ChannelGroup &group,
+         double start, double end, size_t index
+      )  : WideChannelGroupInterval{ group, start, end }
+         , index{ index }
+      {}
+
+      ~Interval() override;
+      std::shared_ptr<ChannelInterval> DoGetChannel(size_t iChannel) override;
+
       size_t index;
-      explicit IntervalData(size_t index) : index{index} {};
    };
-   ConstInterval MakeInterval ( size_t index ) const;
-   Interval MakeInterval ( size_t index );
-   ConstIntervals GetIntervals() const override;
-   Intervals GetIntervals() override;
+   std::shared_ptr<Interval> MakeInterval(size_t index);
 
- public:
+public:
    void SortLabels();
 
- private:
+   size_t NIntervals() const override;
+
+private:
+   std::shared_ptr<WideChannelGroupInterval> DoGetInterval(size_t iInterval)
+      override;
+
    LabelArray mLabels;
 
    // Set in copied label tracks

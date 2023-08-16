@@ -43,9 +43,12 @@ Paul Licameli split from AudacityProject.cpp
 #include "WaveTrack.h"
 #include "WaveClip.h"
 #include "wxFileNameWrapper.h"
-#include "export/Export.h"
-#include "import/Import.h"
+#include "Export.h"
+#include "Import.h"
+#include "ImportProgressListener.h"
+#include "ImportPlugin.h"
 #include "import/ImportMIDI.h"
+#include "import/ImportStreamDialog.h"
 #include "toolbars/SelectionBar.h"
 #include "AudacityMessageBox.h"
 #include "widgets/FileHistory.h"
@@ -159,66 +162,79 @@ auto ProjectFileManager::ReadProjectFile(
    ///
    /// Parse project file
    ///
-   bool bParseSuccess = projectFileIO.LoadProject(fileName, discardAutosave);
+   auto parseResult = projectFileIO.LoadProject(fileName, discardAutosave);
+   const bool bParseSuccess = parseResult.has_value();
    
    bool err = false;
 
+   TranslatableString otherError;
+
    if (bParseSuccess)
    {
-      if (discardAutosave)
-         // REVIEW: Failure OK?
-         projectFileIO.AutoSaveDelete();
-      else if (projectFileIO.IsRecovered()) {
-         bool resaved = false;
-
-         if (!projectFileIO.IsTemporary())
-         {
-            // Re-save non-temporary project to its own path.  This
-            // might fail to update the document blob in the database.
-            resaved = projectFileIO.SaveProject(fileName, nullptr);
+      auto &tracks = TrackList::Get(project);
+      for (auto t : tracks) {
+         // Note, the next function may have an important upgrading side effect,
+         // and return no error; or it may find a real error and repair it, but
+         // that repaired track won't be used because opening will fail.
+         if (!t->LinkConsistencyFix()) {
+            otherError = XO("A channel of a stereo track was missing.");
+            err = true;
          }
 
-         AudacityMessageBox(
-            resaved
-               ? XO("This project was not saved properly the last time Audacity ran.\n\n"
-                    "It has been recovered to the last snapshot.")
-               : XO("This project was not saved properly the last time Audacity ran.\n\n"
-                    "It has been recovered to the last snapshot, but you must save it\n"
-                    "to preserve its contents."),
-            XO("Project Recovered"),
-            wxICON_WARNING,
-            &window);
-      }
-
-      // By making a duplicate set of pointers to the existing blocks
-      // on disk, we add one to their reference count, guaranteeing
-      // that their reference counts will never reach zero and thus
-      // the version saved on disk will be preserved until the
-      // user selects Save().
-      mLastSavedTracks = TrackList::Create( nullptr );
-
-      auto &tracks = TrackList::Get( project );
-      for (auto t : tracks.Any())
-      {
-         if (t->GetErrorOpening())
-         {
+         if (const auto message = t->GetErrorOpening()) {
             wxLogWarning(
                wxT("Track %s had error reading clip values from project file."),
                t->GetName());
             err = true;
+            // Keep at most one of the error messages
+            otherError = *message;
+         }
+      }
+
+      if (!err) {
+         parseResult->Commit();
+         if (discardAutosave)
+            // REVIEW: Failure OK?
+            projectFileIO.AutoSaveDelete();
+         else if (projectFileIO.IsRecovered()) {
+            bool resaved = false;
+
+            if (!projectFileIO.IsTemporary())
+            {
+               // Re-save non-temporary project to its own path.  This
+               // might fail to update the document blob in the database.
+               resaved = projectFileIO.SaveProject(fileName, nullptr);
+            }
+
+            AudacityMessageBox(
+               resaved
+                  ? XO(
+"This project was not saved properly the last time Audacity ran.\n\n"
+"It has been recovered to the last snapshot.")
+                  : XO(
+"This project was not saved properly the last time Audacity ran.\n\n"
+"It has been recovered to the last snapshot, but you must save it\n"
+"to preserve its contents."),
+               XO("Project Recovered"),
+               wxICON_WARNING,
+               &window);
          }
 
-         err = ( !t->LinkConsistencyFix() ) || err;
-
-         mLastSavedTracks->Add(t->Duplicate());
+         // By making a duplicate set of pointers to the existing blocks
+         // on disk, we add one to their reference count, guaranteeing
+         // that their reference counts will never reach zero and thus
+         // the version saved on disk will be preserved until the
+         // user selects Save().
+         mLastSavedTracks = TrackList::Create( nullptr );
+         for (auto t : tracks)
+            mLastSavedTracks->Append(std::move(*t->Duplicate()));
       }
    }
 
-   return
-   {
+   return {
       bParseSuccess,
       err,
-      projectFileIO.GetLastError(),
+      (bParseSuccess ? otherError : projectFileIO.GetLastError()),
       FindHelpUrl(projectFileIO.GetLibraryError())
    };
 }
@@ -285,7 +301,7 @@ bool ProjectFileManager::DoSave(const FilePath & fileName, const bool fromSaveAs
       }
 
       auto &tracks = TrackList::Get( proj );
-      if (!tracks.Any())
+      if (tracks.empty())
       {
          if (UndoManager::Get( proj ).UnsavedChanges() &&
                settings.EmptyCanBeDirty())
@@ -374,10 +390,8 @@ bool ProjectFileManager::DoSave(const FilePath & fileName, const bool fromSaveAs
    mLastSavedTracks = TrackList::Create(nullptr);
 
    auto &tracks = TrackList::Get(proj);
-   for (auto t : tracks.Any())
-   {
-      mLastSavedTracks->Add(t->Duplicate());
-   }
+   for (auto t : tracks)
+      mLastSavedTracks->Append(std::move(*t->Duplicate()));
 
    // If we get here, saving the project was successful, so we can DELETE
    // any backup project.
@@ -743,9 +757,7 @@ void ProjectFileManager::CompactProjectOnClose()
    if (mLastSavedTracks)
    {
       for (auto wt : mLastSavedTracks->Any<WaveTrack>())
-      {
          wt->CloseLock();
-      }
 
       // Attempt to compact the project
       projectFileIO.Compact( { mLastSavedTracks.get() } );
@@ -1004,7 +1016,7 @@ AudacityProject *ProjectFileManager::OpenProjectFile(
    const auto &errorStr = results.errorString;
    const bool err = results.trackError;
 
-   if (bParseSuccess) {
+   if (bParseSuccess && !err) {
       auto &formats = ProjectNumericFormats::Get( project );
       auto &settings = ProjectSettings::Get( project );
       window.mbInitializingScrollbar = true;
@@ -1019,7 +1031,7 @@ AudacityProject *ProjectFileManager::OpenProjectFile(
          formats.GetBandwidthSelectionFormatName());
       
       ProjectHistory::Get( project ).InitialState();
-      TrackFocus::Get( project ).Set( *tracks.Any().begin() );
+      TrackFocus::Get(project).Set(*tracks.begin());
       window.HandleResize();
       trackPanel.Refresh(false);
 
@@ -1033,7 +1045,7 @@ AudacityProject *ProjectFileManager::OpenProjectFile(
          FileHistory::Global().Append(fileName);
    }
 
-   if (bParseSuccess) {
+   if (bParseSuccess && !err) {
       if (projectFileIO.IsRecovered())
       {
          // PushState calls AutoSave(), so no longer need to do so here.
@@ -1052,7 +1064,7 @@ AudacityProject *ProjectFileManager::OpenProjectFile(
       // may have spared the files at the expense of leaked memory).  But
       // here is a better way to accomplish the intent, doing like what happens
       // when the project closes:
-      for ( auto pTrack : tracks.Any< WaveTrack >() )
+      for (auto pTrack : tracks.Any<WaveTrack>())
          pTrack->CloseLock();
 
       tracks.Clear(); //tracks.Clear(true);
@@ -1070,14 +1082,14 @@ AudacityProject *ProjectFileManager::OpenProjectFile(
 
 void
 ProjectFileManager::AddImportedTracks(const FilePath &fileName,
-                                      TrackHolders &&newTracks)
+   TrackHolders &&newTracks)
 {
    auto &project = mProject;
    auto &history = ProjectHistory::Get( project );
    auto &projectFileIO = ProjectFileIO::Get( project );
    auto &tracks = TrackList::Get( project );
 
-   std::vector< std::shared_ptr< Track > > results;
+   std::vector<Track*> results;
 
    SelectUtilities::SelectNone( project );
 
@@ -1093,28 +1105,21 @@ ProjectFileManager::AddImportedTracks(const FilePath &fileName,
    // all newly imported tracks are muted.
    const bool projectHasSolo =
       !(tracks.Any<PlayableTrack>() + &PlayableTrack::GetSolo).empty();
-   if (projectHasSolo)
-   {
-      // Iterate vector of vectors of pointers to tracks that are not yet
-      // in the track list
-      for (auto& group : newTracks)
-         if (!group.empty())
-            (*group.begin())->SetMute(true);
+   if (projectHasSolo) {
+      for (auto &group : newTracks)
+         for (const auto pTrack : group->Any<WaveTrack>())
+            pTrack->SetMute(true);
    }
 
    // Must add all tracks first (before using Track::IsLeader)
    for (auto &group : newTracks) {
-      if (group.empty()) {
-         wxASSERT(false);
+      if (group->empty()) {
+         assert(false);
          continue;
       }
-      auto first = group.begin()->get();
-      auto nChannels = group.size();
-      for (auto &uNewTrack : group) {
-         auto newTrack = tracks.Add( uNewTrack );
-         results.push_back(newTrack->SharedPointer());
-      }
-      tracks.MakeMultiChannelTrack(*first, nChannels, true);
+      for (const auto pTrack : group->Any<WaveTrack>())
+         results.push_back(pTrack);
+      tracks.Append(std::move(*group));
    }
    newTracks.clear();
       
@@ -1122,29 +1127,25 @@ ProjectFileManager::AddImportedTracks(const FilePath &fileName,
 
    // Add numbers to track names only if there is more than one (mono or stereo)
    // track (not necessarily, more than one channel)
-   const bool useSuffix =
-      make_iterator_range( results.begin() + 1, results.end() )
-         .any_of( []( decltype(*results.begin()) &pTrack )
-            { return pTrack->IsLeader(); } );
+   const bool useSuffix = results.size() > 1;
 
    for (const auto &newTrack : results) {
-      if ( newTrack->IsLeader() ) {
-         // Count groups only
-         ++i;
-         newTrack->SetSelected(true);
-         if (useSuffix)
-             //i18n-hint Name default name assigned to a clip on track import
-             newTrack->SetName(XC("%s %d", "clip name template").Format(trackNameBase, i + 1).Translation());
-         else
-             newTrack->SetName(trackNameBase);
-      }
+      ++i;
+      newTrack->SetSelected(true);
+      if (useSuffix)
+         //i18n-hint Name default name assigned to a clip on track import
+         newTrack->SetName(XC("%s %d", "clip name template")
+            .Format(trackNameBase, i + 1).Translation());
+      else
+         newTrack->SetName(trackNameBase);
 
-      newTrack->TypeSwitch([&](WaveTrack *wt) {
+      newTrack->TypeSwitch([&](WaveTrack &wt) {
          if (newRate == 0)
-            newRate = wt->GetRate();
-         auto trackName = wt->GetName();
-         for (auto& clip : wt->GetClips())
-            clip->SetName(trackName);
+            newRate = wt.GetRate();
+         auto trackName = wt.GetName();
+         for (const auto pChannel : TrackList::Channels(&wt))
+            for (auto& clip : pChannel->GetClips())
+               clip->SetName(trackName);
       });
    }
 
@@ -1189,16 +1190,79 @@ bool ImportProject(AudacityProject &dest, const FilePath &fileName)
       return false;
    auto &srcTracks = TrackList::Get(project);
    auto &destTracks = TrackList::Get(dest);
-   for (const Track *pTrack : srcTracks.Any()) {
-      auto destTrack = pTrack->PasteInto(dest);
-      Track::FinishCopy(pTrack, destTrack.get());
-      if (destTrack.use_count() == 1)
-         destTracks.Add(destTrack);
-   }
+   for (const Track *pTrack : srcTracks)
+      pTrack->PasteInto(dest, destTracks);
    Tags::Get(dest).Merge(Tags::Get(project));
 
    return true;
 }
+
+class ImportProgress final
+   : public ImportProgressListener
+{
+   wxWeakRef<AudacityProject> mProject;
+public:
+   
+   ImportProgress(AudacityProject& project)
+      : mProject(&project)
+   {
+
+   }
+   
+   bool OnImportFileOpened(ImportFileHandle& importFileHandle) override
+   {
+      mImportFileHandle = &importFileHandle;
+      // File has more than one stream - display stream selector
+      if (importFileHandle.GetStreamCount() > 1)
+      {
+         ImportStreamDialog ImportDlg(&importFileHandle, NULL, -1, XO("Select stream(s) to import"));
+
+         if (ImportDlg.ShowModal() == wxID_CANCEL)
+            return false;
+      }
+      // One stream - import it by default
+      else
+         importFileHandle.SetStreamUsage(0,TRUE);
+      return true;
+   }
+   
+   void OnImportProgress(double progress) override
+   {
+      constexpr double ProgressSteps { 1000.0 };
+      if(!mProgressDialog)
+      {
+         wxFileName ff( mImportFileHandle->GetFilename() );
+         auto title = XO("Importing %s").Format(  mImportFileHandle->GetFileDescription() );
+         mProgressDialog = BasicUI::MakeProgress(title, Verbatim(ff.GetFullName()));
+      }
+      auto result = mProgressDialog->Poll(progress * ProgressSteps, ProgressSteps);
+      if(result == BasicUI::ProgressResult::Cancelled)
+         mImportFileHandle->Cancel();
+      else if(result == BasicUI::ProgressResult::Stopped)
+         mImportFileHandle->Stop();
+   }
+   
+   void OnImportResult(ImportResult result) override
+   {
+      mProgressDialog.reset();
+      if(result == ImportResult::Error)
+      {
+         auto message = mImportFileHandle->GetErrorMessage();
+         if(!message.empty())
+         {
+            AudacityMessageBox(message, XO("Import"), wxOK | wxCENTRE | wxICON_ERROR,
+                               mProject ? &GetProjectFrame(*mProject) : nullptr);
+         }
+      }
+   }
+   
+private:
+   
+   ImportFileHandle* mImportFileHandle {nullptr};
+   std::unique_ptr<BasicUI::ProgressDialog> mProgressDialog;
+};
+
+
 }
 
 // If pNewTrackList is passed in non-NULL, it gets filled with the pointers to NEW tracks.
@@ -1270,7 +1334,9 @@ bool ProjectFileManager::Import(
          return false;
       }
 #endif
+      ImportProgress importProgress(project);
       bool success = Importer::Get().Import(project, fileName,
+                                            &importProgress,
                                             &WaveTrackFactory::Get( project ),
                                             newTracks,
                                             newTags.get(),

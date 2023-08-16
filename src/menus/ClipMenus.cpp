@@ -11,27 +11,20 @@
 #include "../commands/CommandManager.h"
 #include "../tracks/ui/TimeShiftHandle.h"
 
+#include <cassert>
+
 // private helper classes and functions
 namespace {
 
 struct FoundTrack {
    const WaveTrack* waveTrack{};
    int trackNum{};
-   bool channel{};
 
    wxString ComposeTrackName() const
    {
       /* i18n-hint: The %d is replaced by the number of the track.*/
-      auto shortName = wxString::Format(_("Track %d"), trackNum).Append(" " + waveTrack->GetName());
-      if (channel) {
-         // TODO: more-than-two-channels-message
-         if ( waveTrack->IsLeader() )
-         /* i18n-hint: given the name of a track, specify its left channel */
-            return XO("%s left").Translation().Format(shortName);
-         else
-         /* i18n-hint: given the name of a track, specify its right channel */
-            return XO("%s right").Translation().Format(shortName);
-      }
+      auto shortName = wxString::Format(_("Track %d"), trackNum)
+         .Append(" " + waveTrack->GetName());
       return shortName;
    }
 };
@@ -55,48 +48,7 @@ struct FoundClipBoundary : FoundTrack {
    bool clipStart2{};
 };
 
-bool TwoChannelsHaveSameBoundaries
-( const WaveTrack *first, const WaveTrack *second )
-{
-   bool sameClips = false;
-
-   auto& left = first->GetClips();
-   auto& right = second->GetClips();
-   
-   // PRL:  should that have been? :
-   // auto left = first->SortedClipArray();
-   // auto right = second->SortedClipArray();
-
-   if (left.size() == right.size()) {
-      sameClips = true;
-      for (unsigned int i = 0; i < left.size(); i++) {
-         if (left[i]->GetPlayStartTime() != right[i]->GetPlayStartTime() ||
-            left[i]->GetPlayEndTime() != right[i]->GetPlayEndTime()) {
-            sameClips = false;
-            break;
-         }
-      }
-   }
-   return sameClips;
-}
-
-bool ChannelsHaveDifferentClipBoundaries(
-   const WaveTrack* wt)
-{
-   // This is quadratic in the number of channels
-   auto channels = TrackList::Channels(wt);
-   while (!channels.empty()) {
-      auto channel = *channels.first++;
-      for (auto other : channels) {
-         if (!TwoChannelsHaveSameBoundaries(channel, other))
-            return true;
-      }
-   }
-
-   return false;
-}
-
-// When two clips are immediately next to each other, the GetPlayEndTime() of the 
+// When two clips are immediately next to each other, the GetPlayEndTime() of the
 // first clip and the GetPlayStartTime() of the second clip may not be exactly equal
 // due to rounding errors. When searching for the next/prev start time from a
 // given time, the following function adjusts that given time if necessary to
@@ -264,7 +216,7 @@ int FindClipBoundaries
    auto &tracks = TrackList::Get( project );
    finalResults.clear();
 
-   bool anyWaveTracksSelected{ tracks.Selected< const WaveTrack >() };
+   bool anyWaveTracksSelected{ tracks.Selected<const WaveTrack>() };
 
 
    // first search the tracks individually
@@ -272,26 +224,17 @@ int FindClipBoundaries
    std::vector<FoundClipBoundary> results;
 
    int nTracksSearched = 0;
-   auto leaders = tracks.Leaders();
+   auto leaders = tracks.Any();
    auto rangeLeaders = leaders.Filter<const WaveTrack>();
    if (anyWaveTracksSelected)
       rangeLeaders = rangeLeaders + &Track::GetSelected;
    for (auto waveTrack : rangeLeaders) {
-      bool stereoAndDiff = ChannelsHaveDifferentClipBoundaries(waveTrack);
-
-      auto rangeChan = stereoAndDiff
-         ? TrackList::Channels( waveTrack )
-         : TrackList::SingletonRange(waveTrack);
-
-      for (auto wt : rangeChan) {
-         auto result = next ? FindNextClipBoundary(wt, time) :
-         FindPrevClipBoundary(wt, time);
-         if (result.nFound > 0) {
-            result.trackNum =
-               1 + std::distance( leaders.begin(), leaders.find( waveTrack ) );
-            result.channel = stereoAndDiff;
-            results.push_back(result);
-         }
+      auto result = next ? FindNextClipBoundary(waveTrack, time) :
+         FindPrevClipBoundary(waveTrack, time);
+      if (result.nFound > 0) {
+         result.trackNum =
+            1 + std::distance(leaders.begin(), leaders.find(waveTrack));
+         results.push_back(result);
       }
 
       nTracksSearched++;
@@ -502,35 +445,25 @@ int FindClips
    auto &tracks = TrackList::Get( project );
    finalResults.clear();
 
-   bool anyWaveTracksSelected{ tracks.Selected< const WaveTrack >() };
+   bool anyWaveTracksSelected{ tracks.Selected<const WaveTrack>() };
 
    // first search the tracks individually
 
    std::vector<FoundClip> results;
 
    int nTracksSearched = 0;
-   auto leaders = tracks.Leaders();
+   auto leaders = tracks.Any();
    auto rangeLeaders = leaders.Filter<const WaveTrack>();
    if (anyWaveTracksSelected)
       rangeLeaders = rangeLeaders + &Track::GetSelected;
    for (auto waveTrack : rangeLeaders) {
-      bool stereoAndDiff = ChannelsHaveDifferentClipBoundaries(waveTrack);
-
-      auto rangeChans = stereoAndDiff
-         ? TrackList::Channels( waveTrack )
-         : TrackList::SingletonRange( waveTrack );
-
-      for ( auto wt : rangeChans ) {
-         auto result = next ? FindNextClip(project, wt, t0, t1) :
-            FindPrevClip(project, wt, t0, t1);
-         if (result.found) {
-            result.trackNum =
-               1 + std::distance( leaders.begin(), leaders.find( waveTrack ) );
-            result.channel = stereoAndDiff;
-            results.push_back(result);
-         }
+      auto result = next ? FindNextClip(project, waveTrack, t0, t1) :
+         FindPrevClip(project, waveTrack, t0, t1);
+      if (result.found) {
+         result.trackNum =
+            1 + std::distance(leaders.begin(), leaders.find(waveTrack));
+         results.push_back(result);
       }
-
       nTracksSearched++;
    }
 
@@ -648,40 +581,38 @@ void DoCursorClipBoundary
 }
 
 // This function returns the amount moved.  Possibly 0.0.
-double DoClipMove( AudacityProject &project, Track *track,
-     TrackList &trackList, bool syncLocked, bool right )
+double DoClipMove(AudacityProject &project, TrackList &trackList,
+   bool syncLocked, bool right)
 {
+   auto &trackFocus = TrackFocus::Get(project);
    auto &viewInfo = ViewInfo::Get(project);
    auto &selectedRegion = viewInfo.selectedRegion;
 
+   auto track = trackFocus.Get();
    if (track) {
+      // Focus is always a leader,
+      // satisfying the pre of MakeTrackShifter
+      assert(track->IsLeader());
       ClipMoveState state;
 
       auto t0 = selectedRegion.t0();
 
       std::unique_ptr<TrackShifter> uShifter;
 
-      // Find the first channel that has a clip at time t0
       auto hitTestResult = TrackShifter::HitTestResult::Track;
-      for (auto channel : TrackList::Channels(track) ) {
-         uShifter = MakeTrackShifter::Call( *channel, project );
-         if ( (hitTestResult = uShifter->HitTest( t0, viewInfo )) ==
-             TrackShifter::HitTestResult::Miss )
-            uShifter.reset();
-         else
-            break;
-      }
-
-      if (!uShifter)
+      uShifter = MakeTrackShifter::Call(*track, project);
+      if ((hitTestResult = uShifter->HitTest(t0, viewInfo)) ==
+          TrackShifter::HitTestResult::Miss)
          return 0.0;
+
       auto pShifter = uShifter.get();
-      auto desiredT0 = viewInfo.OffsetTimeByPixels( t0, ( right ? 1 : -1 ) );
-      auto desiredSlideAmount = pShifter->HintOffsetLarger( desiredT0 - t0 );
+      auto desiredT0 = viewInfo.OffsetTimeByPixels(t0, (right ? 1 : -1));
+      auto desiredSlideAmount = pShifter->HintOffsetLarger(desiredT0 - t0);
 
-      state.Init( project, pShifter->GetTrack(), hitTestResult, std::move( uShifter ),
-         t0, viewInfo, trackList, syncLocked );
+      state.Init(project, pShifter->GetTrack(), hitTestResult, move(uShifter),
+         t0, viewInfo, trackList, syncLocked);
 
-      auto hSlideAmount = state.DoSlideHorizontal( desiredSlideAmount );
+      auto hSlideAmount = state.DoSlideHorizontal(desiredSlideAmount);
 
       double newT0 = t0 + hSlideAmount;
       if (hitTestResult != TrackShifter::HitTestResult::Track) {
@@ -717,8 +648,7 @@ void DoClipLeftOrRight
    auto &tracks = TrackList::Get( project );
    auto isSyncLocked = SyncLockState::Get(project).IsSyncLocked();
 
-   auto amount = DoClipMove( project, trackFocus.Get(),
-        tracks, isSyncLocked, right );
+   auto amount = DoClipMove(project, tracks, isSyncLocked, right);
 
    window.ScrollIntoView(selectedRegion.t0());
 

@@ -26,6 +26,7 @@ effects from this one class.
 
 
 #include "Nyquist.h"
+#include "EffectOutputTracks.h"
 
 #include <algorithm>
 #include <cmath>
@@ -75,8 +76,8 @@ effects from this one class.
 #include "Prefs.h"
 #include "wxFileNameWrapper.h"
 #include "../../prefs/GUIPrefs.h"
-#include "../../tracks/playabletrack/wavetrack/ui/WaveTrackView.h"
-#include "../../tracks/playabletrack/wavetrack/ui/WaveTrackViewConstants.h"
+#include "../../tracks/playabletrack/wavetrack/ui/WaveChannelView.h"
+#include "../../tracks/playabletrack/wavetrack/ui/WaveChannelViewConstants.h"
 #include "../../widgets/NumericTextCtrl.h"
 #include "ProgressDialog.h"
 
@@ -591,15 +592,16 @@ bool NyquistEffect::Init()
          bool bAllowSpectralEditing = false;
          bool hasSpectral = false;
          for (auto t :
-            TrackList::Get( *project ).SelectedLeaders<const WaveTrack>()) {
+            TrackList::Get( *project ).Selected<const WaveTrack>()) {
             // Find() not Get() to avoid creation-on-demand of views in case we are
             // only previewing
-            auto pView = WaveTrackView::Find( t );
+            auto pView = WaveChannelView::Find(t);
             if ( pView ) {
                const auto displays = pView->GetDisplays();
                if (displays.end() != std::find(
                   displays.begin(), displays.end(),
-                  WaveTrackSubView::Type{ WaveTrackViewConstants::Spectrum, {} }))
+                  WaveChannelSubView::Type{
+                     WaveChannelViewConstants::Spectrum, {} }))
                   hasSpectral = true;
             }
             if ( hasSpectral &&
@@ -695,7 +697,7 @@ bool NyquistEffect::Process(EffectInstance &, EffectSettings &settings)
    RegisterFunctions();
 
    bool success = true;
-   int nEffectsSoFar = nEffectsDone;
+   int nEffectsSoFar = EffectOutputTracks::nEffectsDone;
    mProjectChanged = false;
    EffectManager & em = EffectManager::Get();
    em.SetSkipStateFlag(false);
@@ -725,12 +727,14 @@ bool NyquistEffect::Process(EffectInstance &, EffectSettings &settings)
    // We must copy all the tracks, because Paste needs label tracks to ensure
    // correct sync-lock group behavior when the timeline is affected; then we just want
    // to operate on the selected wave tracks
-   if ( !bOnePassTool )
-      CopyInputTracks(true);
+   std::optional<EffectOutputTracks> oOutputs;
+   if (!bOnePassTool)
+      oOutputs.emplace(*mTracks, true);
 
    mNumSelectedChannels = bOnePassTool
       ? 0
-      : mOutputTracks->Selected< const WaveTrack >().size();
+      : oOutputs->Get().Selected<const WaveTrack>()
+         .sum(&WaveTrack::NChannels);
 
    mDebugOutput = {};
    if (!mHelpFile.empty() && !mHelpFileExists) {
@@ -810,9 +814,9 @@ bool NyquistEffect::Process(EffectInstance &, EffectSettings &settings)
       wxString waveTrackList;   // track positions of selected audio tracks.
 
       {
-         auto countRange = TrackList::Get( *project ).Leaders();
+         auto countRange = TrackList::Get( *project ).Any();
          for (auto t : countRange) {
-            t->TypeSwitch( [&](const WaveTrack *) {
+            t->TypeSwitch( [&](const WaveTrack &) {
                numWave++;
                if (t->GetSelected())
                   waveTrackList += wxString::Format(wxT("%d "), 1 + numTracks);
@@ -866,7 +870,7 @@ bool NyquistEffect::Process(EffectInstance &, EffectSettings &settings)
 
    std::optional<TrackIterRange<WaveTrack>> pRange;
    if (!bOnePassTool)
-      pRange.emplace(mOutputTracks->SelectedLeaders<WaveTrack>());
+      pRange.emplace(oOutputs->Get().Selected<WaveTrack>());
 
    // Keep track of whether the current track is first selected in its sync-lock group
    // (we have no idea what the length of the returned audio will be, so we have
@@ -896,14 +900,6 @@ bool NyquistEffect::Process(EffectInstance &, EffectSettings &settings)
                mCurNumChannels = 2;
 
                mCurTrack[1] = * ++ channels.first;
-               if (mCurTrack[1]->GetRate() != mCurTrack[0]->GetRate()) {
-                  EffectUIServices::DoMessageBox(*this,
-                     XO(
-"Sorry, cannot apply effect on stereo tracks where the tracks don't match."),
-                     wxOK | wxCENTRE );
-                  success = false;
-                  goto finish;
-               }
                mCurStart[1] = mCurTrack[1]->TimeToLongSamples(mT0);
             }
 
@@ -984,7 +980,7 @@ bool NyquistEffect::Process(EffectInstance &, EffectSettings &settings)
             mPerTrackProps += wxString::Format(wxT("(putprop '*SELECTION* %s 'BANDWIDTH)\n"), bandwidth);
          }
 
-         success = ProcessOne();
+         success = ProcessOne(oOutputs ? &*oOutputs : nullptr);
 
          // Reset previous locale
          wxSetlocale(LC_NUMERIC, prevlocale);
@@ -1017,10 +1013,12 @@ finish:
    }
 
    // Has rug been pulled from under us by some effect done within Nyquist??
-   if( !bOnePassTool && ( nEffectsSoFar == nEffectsDone ))
-      ReplaceProcessedTracks(success);
-   else{
-      ReplaceProcessedTracks(false); // Do not use the results.
+   if (!bOnePassTool && (nEffectsSoFar == EffectOutputTracks::nEffectsDone)) {
+      if (success)
+         oOutputs->Commit();
+   }
+   else {
+      // Do not use the results.
       // Selection is to be set to whatever it is in the project.
       auto project = FindProject();
       if (project) {
@@ -1041,7 +1039,7 @@ finish:
    return success;
 }
 
-int NyquistEffect::ShowHostInterface(EffectPlugin &plugin,
+int NyquistEffect::ShowHostInterface(EffectBase &plugin,
    wxWindow &parent, const EffectDialogFactory &factory,
    std::shared_ptr<EffectInstance> &pInstance, EffectSettingsAccess &access,
    bool forceModal)
@@ -1176,7 +1174,7 @@ bool NyquistEffect::TransferDataFromWindow(EffectSettings &)
 
 // NyquistEffect implementation
 
-bool NyquistEffect::ProcessOne()
+bool NyquistEffect::ProcessOne(EffectOutputTracks *pOutputs)
 {
    mpException = {};
 
@@ -1211,14 +1209,14 @@ bool NyquistEffect::ProcessOne()
       wxString spectralEditp;
 
       mCurTrack[0]->TypeSwitch(
-         [&](const WaveTrack *wt) {
+         [&](const WaveTrack &wt) {
             type = wxT("wave");
             spectralEditp = SpectrogramSettings::Get(*mCurTrack[0])
                .SpectralSelectionEnabled()? wxT("T") : wxT("NIL");
             view = wxT("NIL");
             // Find() not Get() to avoid creation-on-demand of views in case we are
             // only previewing
-            if ( const auto pView = WaveTrackView::Find( wt ) ) {
+            if (const auto pView = WaveChannelView::Find(&wt)) {
                auto displays = pView->GetDisplays();
                auto format = [&]( decltype(displays[0]) display ) {
                   // Get the English name of the view type, without menu codes,
@@ -1239,16 +1237,16 @@ bool NyquistEffect::ProcessOne()
             }
          },
 #if defined(USE_MIDI)
-         [&](const NoteTrack *) {
+         [&](const NoteTrack &) {
             type = wxT("midi");
             view = wxT("\"Midi\"");
          },
 #endif
-         [&](const LabelTrack *) {
+         [&](const LabelTrack &) {
             type = wxT("label");
             view = wxT("\"Label\"");
          },
-         [&](const TimeTrack *) {
+         [&](const TimeTrack &) {
             type = wxT("time");
             view = wxT("\"Time\"");
          }
@@ -1264,9 +1262,8 @@ bool NyquistEffect::ProcessOne()
       //NOTE: Audacity 2.1.3 True if spectral selection is enabled regardless of track view.
       cmd += wxString::Format(wxT("(putprop '*TRACK* %s 'SPECTRAL-EDIT-ENABLED)\n"), spectralEditp);
 
-      auto channels = TrackList::Channels( mCurTrack[0] );
-      double startTime = channels.min( &Track::GetStartTime );
-      double endTime = channels.max( &Track::GetEndTime );
+      const double startTime = mCurTrack[0]->GetStartTime();
+      const double endTime = mCurTrack[0]->GetEndTime();
 
       cmd += wxString::Format(wxT("(putprop '*TRACK* (float %s) 'START-TIME)\n"),
                               Internat::ToString(startTime));
@@ -1580,16 +1577,22 @@ bool NyquistEffect::ProcessOne()
    }
 
    if (rval == nyx_labels) {
+      assert(GetType() != EffectTypeTool); // Guaranteed above
+      // Therefore bOnePassTool was false in Process()
+      // Therefore output tracks were allocated
+      assert(pOutputs);
+
       mProjectChanged = true;
       unsigned int numLabels = nyx_get_num_labels();
       unsigned int l;
-      auto ltrack = * mOutputTracks->Any< LabelTrack >().begin();
+      auto ltrack = *pOutputs->Get().Any<LabelTrack>().begin();
       if (!ltrack) {
          auto newTrack = std::make_shared<LabelTrack>();
          //new track name should be unique among the names in the list of input tracks, not output
          newTrack->SetName(inputTracks()->MakeUniqueTrackName(LabelTrack::GetDefaultName()));
+         assert(newTrack->IsLeader()); // because it's a label track
          ltrack = static_cast<LabelTrack*>(
-            AddToOutputTracks(newTrack));
+            pOutputs->AddToOutputTracks(newTrack));
       }
 
       for (l = 0; l < numLabels; l++) {
@@ -1661,46 +1664,42 @@ bool NyquistEffect::ProcessOne()
    if (!success)
       return false;
 
-   for (int i = 0; i < outChannels; i++) {
-      outputTrack[i]->Flush();
-      mOutputTime = outputTrack[i]->GetEndTime();
-
-      if (mOutputTime <= 0) {
-         EffectUIServices::DoMessageBox(
-            *this, XO("Nyquist returned nil audio.\n"));
-         return false;
-      }
+   mOutputTime = outputTrack[0]->GetEndTime();
+   if (mOutputTime <= 0) {
+      EffectUIServices::DoMessageBox(
+         *this, XO("Nyquist returned nil audio.\n"));
+      return false;
    }
 
-   for (size_t i = 0; i < mCurNumChannels; i++) {
-      WaveTrack *out;
+   const auto &out = outputTrack[0];
+   std::shared_ptr<TrackList> tempList;
+   if (outChannels < static_cast<int>(mCurNumChannels)) {
+      // Be careful to do this before duplication
+      outputTrack[0]->Flush();
+      outputTrack[1] = (*out->Duplicate()->begin())->SharedPointer<WaveTrack>();
+      tempList = TrackList::Temporary(nullptr, outputTrack[0], outputTrack[1]);
+   }
+   else {
+      tempList = TrackList::Temporary(nullptr, outputTrack[0], outputTrack[1]);
+      outputTrack[0]->Flush();
+   }
 
-      if (outChannels == (int)mCurNumChannels) {
-         out = outputTrack[i].get();
-      }
-      else {
-         out = outputTrack[0].get();
-      }
+   {
+      const bool bMergeClips = (mMergeClips < 0)
+         // Use sample counts to determine default behaviour - times will rarely
+         // be equal.
+         ? (out->TimeToLongSamples(mT0) + out->TimeToLongSamples(mOutputTime)
+            == out->TimeToLongSamples(mT1))
+         : mMergeClips != 0;
+      mCurTrack[0]
+         ->ClearAndPaste(mT0, mT1, *tempList, mRestoreSplits, bMergeClips);
+   }
 
-      if (mMergeClips < 0) {
-         // Use sample counts to determine default behaviour - times will rarely be equal.
-         bool bMergeClips = (out->TimeToLongSamples(mT0) + out->TimeToLongSamples(mOutputTime) ==
-                                                                     out->TimeToLongSamples(mT1));
-         mCurTrack[i]->ClearAndPaste(mT0, mT1, out, mRestoreSplits, bMergeClips);
-      }
-      else {
-         mCurTrack[i]->ClearAndPaste(mT0, mT1, out, mRestoreSplits, mMergeClips != 0);
-      }
-
-      // If we were first in the group adjust non-selected group tracks
-      if (mFirstInGroup) {
-         for (auto t : SyncLock::Group(mCurTrack[i]))
-         {
-            if (!t->GetSelected() && SyncLock::IsSyncLockSelected(t)) {
-               t->SyncLockAdjust(mT1, mT0 + out->GetEndTime());
-            }
-         }
-      }
+   // If we were first in the group adjust non-selected group tracks
+   if (mFirstInGroup) {
+      for (auto t : SyncLock::Group(mCurTrack[0]))
+         if (!t->GetSelected() && SyncLock::IsSyncLockSelected(t))
+            t->SyncLockAdjust(mT1, mT0 + outputTrack[0]->GetEndTime());
 
       // Only the first channel can be first in its group
       mFirstInGroup = false;

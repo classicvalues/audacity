@@ -37,6 +37,7 @@ explicitly code all three.
 #include "CommandDispatch.h"
 #include "CommandManager.h"
 #include "../CommonCommandFlags.h"
+#include "EffectOutputTracks.h"
 #include "LoadCommands.h"
 #include "../ProjectSelectionManager.h"
 #include "../TrackPanel.h"
@@ -115,7 +116,7 @@ bool SelectTimeCommand::Apply(const CommandContext & context){
       mRelativeTo = 0;
 
    AudacityProject * p = &context.project;
-   double end = TrackList::Get( *p ).GetEndTime();
+   double end = TrackList::Get(*p).GetEndTime();
    double t0;
    double t1;
 
@@ -253,7 +254,7 @@ bool SelectTracksCommand::Apply(const CommandContext &context)
 
    // Count selection as a do-nothing effect.
    // Used to invalidate cached selection and tracks.
-   Effect::IncEffectCounter();
+   EffectOutputTracks::IncEffectCounter();
    int index = 0;
    auto &tracks = TrackList::Get( context.project );
 
@@ -267,7 +268,7 @@ bool SelectTracksCommand::Apply(const CommandContext &context)
    double last = mFirstTrack + mNumTracks;
    double first = mFirstTrack;
 
-   for (auto t : tracks.Leaders()) {
+   for (auto t : tracks) {
       const bool sel = first <= index && index < last;
       if (mMode == 0) // Set
          t->SetSelected(sel);

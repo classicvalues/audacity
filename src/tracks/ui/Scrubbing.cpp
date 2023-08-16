@@ -234,7 +234,7 @@ Scrubber::~Scrubber()
 
 static const auto HasWaveDataPred =
    [](const AudacityProject &project){
-      auto range = TrackList::Get( project ).Any<const WaveTrack>()
+      auto range = TrackList::Get(project).Any<const WaveTrack>()
          + [](const WaveTrack *pTrack){
             return pTrack->GetEndTime() > pTrack->GetStartTime();
          };
@@ -375,9 +375,9 @@ bool Scrubber::MaybeStartScrubbing(wxCoord xx)
 
       wxCoord position = xx;
       if (abs(mScrubStartPosition - position) >= SCRUBBING_PIXEL_TOLERANCE) {
-         auto &viewInfo = ViewInfo::Get( *mProject );
-         auto &projectAudioManager = ProjectAudioManager::Get( *mProject );
-         double maxTime = TrackList::Get( *mProject ).GetEndTime();
+         auto &viewInfo = ViewInfo::Get(*mProject);
+         auto &projectAudioManager = ProjectAudioManager::Get(*mProject);
+         double maxTime = TrackList::Get(*mProject).GetEndTime();
          const int leftOffset = viewInfo.GetLeftOffset();
          double time0 = std::min(maxTime,
             viewInfo.PositionToTime(mScrubStartPosition, leftOffset)
@@ -442,7 +442,7 @@ bool Scrubber::MaybeStartScrubbing(wxCoord xx)
 #endif
             mOptions.minTime = 0;
             mOptions.maxTime =
-               std::max(0.0, TrackList::Get( *mProject ).GetEndTime());
+               std::max(0.0, TrackList::Get(*mProject).GetEndTime());
             mOptions.minStutterTime =
 #ifdef DRAG_SCRUB
                mDragging ? PlaybackPolicy::Duration{} :
@@ -1136,30 +1136,23 @@ using namespace MenuTable;
 BaseItemSharedPtr ToolbarMenu()
 {
    using Options = CommandManager::Options;
-
-   static BaseItemSharedPtr menu { (
-   FinderScope{ finder },
-   Menu( wxT("Scrubbing"),
-      XXO("Scru&bbing"),
-      []{
-         BaseItemPtrs ptrs;
-         for (const auto &item : menuItems()) {
-            ptrs.push_back( Command( item.name, item.label,
-               item.memFn,
-               item.flags,
-               item.StatusTest
-                  ? // a checkmark item
-                     Options{}.CheckTest( [&item](AudacityProject &project){
-                     return ( Scrubber::Get(project).*(item.StatusTest) )(); } )
-                  : // not a checkmark item
-                     Options{}
-            ) );
-         }
-         return ptrs;
-      }()
-   )
-   ) };
-   
+   static auto menu = []{
+      FinderScope scope{ finder };
+      auto menu = std::shared_ptr{ Menu("Scrubbing", XXO("Scru&bbing")) };
+      for (const auto &item : menuItems()) {
+         menu->push_back(Command(item.name, item.label,
+            item.memFn,
+            item.flags,
+            item.StatusTest
+               ? // a checkmark item
+                  Options{}.CheckTest([&item](AudacityProject &project){
+                  return (Scrubber::Get(project).*(item.StatusTest))(); } )
+               : // not a checkmark item
+                  Options{}
+         ));
+      }
+      return menu;
+   }();
    return menu;
 }
 

@@ -37,23 +37,21 @@ namespace {
 
 // Temporal selection (not TimeTrack selection)
 // potentially for all wave tracks.
-void DoSelectTimeAndAudioTracks
-(AudacityProject &project, bool bAllTime, bool bAllTracks)
+void DoSelectTimeAndAudioTracks(
+   AudacityProject &project, bool bAllTime, bool bAllTracks)
 {
-   auto &tracks = TrackList::Get( project );
-   auto &selectedRegion = ViewInfo::Get( project ).selectedRegion;
+   auto &tracks = TrackList::Get(project);
+   auto &selectedRegion = ViewInfo::Get(project).selectedRegion;
 
-   if( bAllTime )
-      selectedRegion.setTimes(
-         tracks.GetMinOffset(), tracks.GetEndTime());
+   if (bAllTime)
+      selectedRegion.setTimes(tracks.GetStartTime(), tracks.GetEndTime());
 
-   if( bAllTracks ) {
+   if (bAllTracks) {
       // Unselect all tracks before selecting audio.
-      for (auto t : tracks.Leaders())
+      for (auto t : tracks)
          t->SetSelected(false);
-      for (auto t : tracks.Leaders<WaveTrack>())
+      for (auto t : tracks.Any<WaveTrack>())
          t->SetSelected(true);
-
       ProjectHistory::Get( project ).ModifyState(false);
    }
 }
@@ -68,11 +66,10 @@ void DoSelectTimeAndTracks
    auto &selectedRegion = ViewInfo::Get( project ).selectedRegion;
 
    if( bAllTime )
-      selectedRegion.setTimes(
-         tracks.GetMinOffset(), tracks.GetEndTime());
+      selectedRegion.setTimes(tracks.GetStartTime(), tracks.GetEndTime());
 
    if( bAllTracks ) {
-      for (auto t : tracks.Leaders())
+      for (auto t : tracks)
          t->SetSelected(true);
 
       ProjectHistory::Get( project ).ModifyState(false);
@@ -82,7 +79,7 @@ void DoSelectTimeAndTracks
 void SelectNone( AudacityProject &project )
 {
    auto &tracks = TrackList::Get( project );
-   for (auto t : tracks.Leaders())
+   for (auto t : tracks)
       t->SetSelected(false);
 
    auto &trackPanel = TrackPanel::Get( project );
@@ -118,25 +115,29 @@ bool SelectAllIfNoneAndAllowed( AudacityProject &project )
    return true;
 }
 
-void DoListSelection
-(AudacityProject &project, Track *t, bool shift, bool ctrl, bool modifyState)
+void DoListSelection(
+   AudacityProject &project, Track &t, bool shift, bool ctrl, bool modifyState)
 {
-   auto &tracks = TrackList::Get( project );
-   auto &selectionState = SelectionState::Get( project );
-   auto &viewInfo = ViewInfo::Get( project );
-   auto &window = GetProjectFrame( project );
+   auto &tracks = TrackList::Get(project);
+   auto &selectionState = SelectionState::Get(project);
+   auto &viewInfo = ViewInfo::Get(project);
+   auto &window = GetProjectFrame(project);
 
    auto isSyncLocked = SyncLockState::Get(project).IsSyncLocked();
+   // Substitute the leader to satisfy precondition
+   auto pT = *tracks.Find(&t);
+   if (!pT)
+      return;
 
    selectionState.HandleListSelection(
-      tracks, viewInfo, *t,
-      shift, ctrl, isSyncLocked );
+      tracks, viewInfo, *pT,
+      shift, ctrl, isSyncLocked);
 
-   if (! ctrl )
-      TrackFocus::Get( project ).Set( t );
+   if (!ctrl)
+      TrackFocus::Get(project).Set(&t);
    window.Refresh(false);
    if (modifyState)
-      ProjectHistory::Get( project ).ModifyState(true);
+      ProjectHistory::Get(project).ModifyState(true);
 }
 
 void DoSelectAll(AudacityProject &project)
@@ -162,8 +163,8 @@ void DoSelectSomething(AudacityProject &project)
    bool bTime = selectedRegion.isPoint();
    bool bTracks = tracks.Selected().empty();
 
-   if( bTime || bTracks )
-      DoSelectTimeAndTracks( project, bTime, bTracks );
+   if (bTime || bTracks)
+      DoSelectTimeAndTracks(project, bTime, bTracks);
 }
 
 void ActivatePlayRegion(AudacityProject &project)

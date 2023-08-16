@@ -97,7 +97,7 @@ void LabelTrackView::Index::SetModified(bool modified)
 }
 
 LabelTrackView::LabelTrackView( const std::shared_ptr<Track> &pTrack )
-   : CommonTrackView{ pTrack }
+   : CommonChannelView{ pTrack, 0 }
 {
    ResetFont();
    CreateCustomGlyphs();
@@ -118,7 +118,7 @@ void LabelTrackView::Reparent( const std::shared_ptr<Track> &parent )
    auto newParent = track_cast<LabelTrack*>(parent.get());
    if (oldParent.get() != newParent)
       BindTo( newParent );
-   CommonTrackView::Reparent( parent );
+   CommonChannelView::Reparent(parent);
 }
 
 void LabelTrackView::BindTo( LabelTrack *pParent )
@@ -140,12 +140,11 @@ void LabelTrackView::BindTo( LabelTrack *pParent )
    });
 }
 
-void LabelTrackView::CopyTo( Track &track ) const
+void LabelTrackView::CopyTo(Track &track) const
 {
-   TrackView::CopyTo( track );
-   auto &other = TrackView::Get( track );
-
-   if ( const auto pOther = dynamic_cast< const LabelTrackView* >( &other ) ) {
+   ChannelView::CopyTo(track);
+   auto &other = ChannelView::Get(*track.GetChannel(0));
+   if (const auto pOther = dynamic_cast<const LabelTrackView*>(&other)) {
       pOther->mNavigationIndex = mNavigationIndex;
       pOther->mInitialCursorPos = mInitialCursorPos;
       pOther->mCurrentCursorPos = mCurrentCursorPos;
@@ -154,14 +153,14 @@ void LabelTrackView::CopyTo( Track &track ) const
    }
 }
 
-LabelTrackView &LabelTrackView::Get( LabelTrack &track )
+LabelTrackView &LabelTrackView::Get(LabelTrack &track)
 {
-   return static_cast< LabelTrackView& >( TrackView::Get( track ) );
+   return static_cast<LabelTrackView&>(ChannelView::Get(track));
 }
 
-const LabelTrackView &LabelTrackView::Get( const LabelTrack &track )
+const LabelTrackView &LabelTrackView::Get(const LabelTrack &track)
 {
-   return static_cast< const LabelTrackView& >( TrackView::Get( track ) );
+   return static_cast<const LabelTrackView&>(ChannelView::Get(track));
 }
 
 std::shared_ptr<LabelTrack> LabelTrackView::FindLabelTrack()
@@ -926,7 +925,7 @@ void LabelTrackView::Draw(
 {
    if ( iPass == TrackArtist::PassTracks )
       Draw( context, rect );
-   CommonTrackView::Draw( context, rect, iPass );
+   CommonChannelView::Draw(context, rect, iPass);
 }
 
 /// uses GetTextExtent to find the character position
@@ -1684,7 +1683,7 @@ bool LabelTrackView::DoKeyDown(
       case WXK_NUMPAD_ENTER:
       case WXK_TAB:
          if (mRestoreFocus >= 0) {
-            auto track = *TrackList::Get( project ).Any()
+            auto track = *TrackList::Get(project).Any()
                .begin().advance(mRestoreFocus);
             if (track)
                TrackFocus::Get( project ).Set(track);
@@ -2077,7 +2076,8 @@ int LabelTrackView::GetLabelIndex(double t, double t1)
 
 // restoreFocus of -1 is the default, and sets the focus to this label.
 // restoreFocus of -2 or other value leaves the focus unchanged.
-// restoreFocus >= 0 will later cause focus to move to that track.
+// restoreFocus >= 0 will later cause focus to move to that track (counting
+// tracks, not channels)
 int LabelTrackView::AddLabel(const SelectedRegion &selectedRegion,
                          const wxString &title, int restoreFocus)
 {
@@ -2340,14 +2340,14 @@ int LabelTrackView::DialogForLabelName(
    return status;
 }
 
-using DoGetLabelTrackView = DoGetView::Override< LabelTrack >;
+using DoGetLabelTrackView = DoGetView::Override<LabelTrack>;
 DEFINE_ATTACHED_VIRTUAL_OVERRIDE(DoGetLabelTrackView) {
-   return [](LabelTrack &track) {
+   return [](LabelTrack &track, size_t) {
       return std::make_shared<LabelTrackView>( track.SharedPointer() );
    };
 }
 
-std::shared_ptr<TrackVRulerControls> LabelTrackView::DoGetVRulerControls()
+std::shared_ptr<ChannelVRulerControls> LabelTrackView::DoGetVRulerControls()
 {
    return
       std::make_shared<LabelTrackVRulerControls>( shared_from_this() );

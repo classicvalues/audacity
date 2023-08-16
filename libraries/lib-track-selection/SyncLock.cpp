@@ -54,7 +54,7 @@ void SyncLockState::SetSyncLock(bool flag)
 }
 
 namespace {
-inline bool IsSyncLockableNonSeparatorTrack( const Track *pTrack )
+inline bool IsSyncLockableNonSeparatorTrack(const Track *pTrack)
 {
    return pTrack && GetSyncLockPolicy::Call(*pTrack) == SyncLockPolicy::Grouped;
 }
@@ -75,11 +75,11 @@ bool IsGoodNextSyncLockTrack(const Track *t, bool inSeparatorSection)
    else if (isSeparator)
       return true;
    else
-      return IsSyncLockableNonSeparatorTrack( t );
+      return IsSyncLockableNonSeparatorTrack(t);
 }
 }
 
-bool SyncLock::IsSyncLockSelected( const Track *pTrack )
+bool SyncLock::IsSyncLockSelected(const Track *pTrack)
 {
    if (!pTrack)
       return false;
@@ -115,7 +115,7 @@ bool SyncLock::IsSelectedOrSyncLockSelected( const Track *pTrack )
 }
 
 namespace {
-std::pair<Track *, Track *> FindSyncLockGroup(  Track *pMember)
+std::pair<Track *, Track *> FindSyncLockGroup(Track *pMember)
 {
    if (!pMember)
       return { nullptr, nullptr };
@@ -127,7 +127,7 @@ std::pair<Track *, Track *> FindSyncLockGroup(  Track *pMember)
    // Step back through any label tracks.
    auto pList = pMember->GetOwner();
    auto member = pList->Find(pMember);
-   while (*member && IsSeparatorTrack(*member) )
+   while (*member && IsSeparatorTrack(*member))
       --member;
 
    // Step back through the wave and note tracks before the label tracks.
@@ -147,7 +147,7 @@ std::pair<Track *, Track *> FindSyncLockGroup(  Track *pMember)
    bool inLabels = false;
 
    while (*++next) {
-      if ( ! IsGoodNextSyncLockTrack(*next, inLabels) )
+      if (!IsGoodNextSyncLockTrack(*next, inLabels))
          break;
       last = next;
       inLabels = IsSeparatorTrack(*last);
@@ -158,11 +158,12 @@ std::pair<Track *, Track *> FindSyncLockGroup(  Track *pMember)
 
 }
 
-TrackIterRange< Track > SyncLock::Group( Track *pTrack )
+TrackIterRange<Track> SyncLock::Group( Track *pTrack )
 {
    auto pList = pTrack->GetOwner();
    auto tracks = FindSyncLockGroup(const_cast<Track*>( pTrack ) );
-   return pList->Any().StartingWith(tracks.first).EndingAfter(tracks.second);
+   return pList->Any()
+      .StartingWith(tracks.first).EndingAfter(tracks.second);
 }
 
 DEFINE_ATTACHED_VIRTUAL(GetSyncLockPolicy) {

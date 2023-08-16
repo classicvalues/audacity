@@ -4,7 +4,7 @@ Audacity: A Digital Audio Editor
 
 SpectrumView.h
 
-Paul Licameli split from WaveTrackView.h
+Paul Licameli split from WaveChannelView.h
 
 **********************************************************************/
 
@@ -14,7 +14,7 @@ Paul Licameli split from WaveTrackView.h
 #include <functional>
 #include <map>
 #include <set>
-#include "WaveTrackView.h" // to inherit
+#include "WaveChannelView.h" // to inherit
 
 
 class WaveTrack;
@@ -76,6 +76,16 @@ public:
       return mEndSample;
    }
 
+   long long GetCorrectedStartSample() const {
+      // Correct the start of range so that the first full window is
+      // centered at that position
+      return std::max<long long>(0, GetStartSample() - 2 * GetHopSize());
+   }
+
+   long long GetLength() const {
+      return GetEndSample() - GetCorrectedStartSample();
+   }
+
    // The double time points is quantized into long long
    void addHopBinData(int hopNum, int freqBin){
       // Update the start and end sampleCount of current selection
@@ -110,17 +120,18 @@ public:
    }
 };
 
-class SpectrumView final : public WaveTrackSubView
+class SpectrumView final : public WaveChannelSubView
 {
    SpectrumView &operator=( const SpectrumView& ) = delete;
 public:
-   SpectrumView(WaveTrackView &waveTrackView, const SpectrumView &src) = delete;
-   explicit SpectrumView(WaveTrackView &waveTrackView);
+   SpectrumView(WaveChannelView &waveChannelView, const SpectrumView &src)
+      = delete;
+   explicit SpectrumView(WaveChannelView &waveChannelView);
    ~SpectrumView() override;
 
    const Type &SubViewType() const override;
 
-   std::shared_ptr<TrackVRulerControls> DoGetVRulerControls() override;
+   std::shared_ptr<ChannelVRulerControls> DoGetVRulerControls() override;
 
    std::shared_ptr<SpectralData> GetSpectralData();
 
@@ -128,7 +139,7 @@ public:
 
    static int mBrushRadius;
 
-   void CopyToSubView( WaveTrackSubView *destSubView ) const override;
+   void CopyToSubView(WaveChannelSubView *destSubView) const override;
 
    class SpectralDataSaver;
 

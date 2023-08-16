@@ -43,6 +43,7 @@
 
 #if !defined(EXPERIMENTAL_NOISE_REDUCTION)
 
+#include "EffectPreview.h"
 #include "LoadEffects.h"
 
 #include "WaveTrack.h"
@@ -156,7 +157,7 @@ bool EffectNoiseRemoval::CheckWhetherSkipEffect(const EffectSettings &) const
  its unusual two-pass nature.  First choose and analyze an example of noise,
  then apply noise reduction to another selection.  That is difficult to fit into
  the framework for managing settings of other effects. */
-int EffectNoiseRemoval::ShowHostInterface(EffectPlugin &,
+int EffectNoiseRemoval::ShowHostInterface(EffectBase &,
    wxWindow &parent, const EffectDialogFactory &,
    std::shared_ptr<EffectInstance> &pInstance, EffectSettingsAccess &access,
    bool forceModal )
@@ -221,11 +222,11 @@ bool EffectNoiseRemoval::Process(EffectInstance &, EffectSettings &)
 
    // This same code will both remove noise and profile it,
    // depending on 'mDoProfile'
-   this->CopyInputTracks(); // Set up mOutputTracks.
+   EffectOutputTracks outputs{ *mTracks };
    bool bGoodResult = true;
 
    int count = 0;
-   for( auto track : mOutputTracks->Selected< WaveTrack >() ) {
+   for (auto track : outputs.Get().Selected<WaveTrack>()) {
       double trackStart = track->GetStartTime();
       double trackEnd = track->GetEndTime();
       double t0 = mT0 < trackStart? trackStart: mT0;
@@ -249,7 +250,9 @@ bool EffectNoiseRemoval::Process(EffectInstance &, EffectSettings &)
       mDoProfile = false;
    }
 
-   this->ReplaceProcessedTracks(bGoodResult);
+   if (bGoodResult)
+      outputs.Commit();
+
    return bGoodResult;
 }
 
@@ -704,7 +707,7 @@ void NoiseRemovalDialog::OnPreview(wxCommandEvent & WXUNUSED(event))
       m_pEffect->mDoProfile = oldDoProfile;
    } );
 
-   m_pEffect->Preview(mAccess, false);
+   EffectPreview(*m_pEffect, mAccess, false);
 }
 
 void NoiseRemovalDialog::OnRemoveNoise( wxCommandEvent & WXUNUSED(event))

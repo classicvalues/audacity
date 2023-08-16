@@ -1,7 +1,7 @@
-[![Audacity](https://forum.audacityteam.org/styles/prosilver/theme/images/Audacity-logo_75px_trans_forum.png)](https://www.audacityteam.org) 
-=========================
+# Audacity
 
-[**Audacity**](https://www.audacityteam.org) is an easy-to-use, multi-track audio editor and recorder for Windows, macOS, GNU/Linux and other operating systems. 
+
+[**Audacity**](https://www.audacityteam.org) is an easy-to-use, multi-track audio editor and recorder for Windows, macOS, GNU/Linux and other operating systems.
 
 - **Recording** from any real or virtual audio device that is available to the host system.
 - **Export / Import** a wide range of audio formats, extensible with FFmpeg.
@@ -17,13 +17,13 @@
 ## Users
 
 For end users, the latest Windows and macOS release version of Audacity is available from the [Audacity website](https://www.audacityteam.org/download/).
-Help with using Audacity is available at https://audacityteam.org/help
+Help with using Audacity is available [here](https://audacityteam.org/help/).
 
 ## Developers
 Build instructions are available [here](https://github.com/audacity/audacity/blob/master/BUILDING.md).
 
-Additional development resources may be found in the [wiki](https://github.com/audacity/audacity/wiki).
+Additional development resources may be found [here](https://audacity.gitbook.io/dev/).
 
 ## License
 
-Audacity is open source software licensed GPLv3. Most code files are GPLv2-or-later, with the notable exceptions being /lib-src (which contains third party libraries), as well as VST3-related code. Documentation is licensed CC-by 3.0 unless otherwise noted. Details can be found in [the license file](LICENSE.txt).
+Audacity is open source software licensed GPLv3. Most code files are GPLv2-or-later, with the notable exceptions being /lib-src (which contains third party libraries), as well as VST3-related code. Documentation is licensed CC-by 3.0 unless otherwise noted. Details can be found in the [license file](LICENSE.txt).

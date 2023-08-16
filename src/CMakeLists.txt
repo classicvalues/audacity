@@ -99,10 +99,6 @@ list( APPEND SOURCES
       DropoutDetector.cpp
       EnvelopeEditor.cpp
       EnvelopeEditor.h
-      FFmpeg.cpp
-      FFmpeg.h
-      FileFormats.cpp
-      FileFormats.h
       FrameStatisticsDialog.cpp
       FrameStatisticsDialog.h
       FreqWindow.cpp
@@ -165,6 +161,9 @@ list( APPEND SOURCES
       ProjectSelectionManager.h
       ProjectSettings.cpp
       ProjectSettings.h
+      ProjectTempoListener.cpp
+      ProjectTimeRuler.cpp
+      ProjectTimeRuler.h
       ProjectWindow.cpp
       ProjectWindow.h
       ProjectWindowBase.cpp
@@ -202,8 +201,12 @@ list( APPEND SOURCES
       ThemedWrappers.h
       TimeDialog.cpp
       TimeDialog.h
+      TimeDisplayMode.cpp
+      TimeDisplayMode.h
       TimerRecordDialog.cpp
       TimerRecordDialog.h
+      TimerRecordExportDialog.cpp
+      TimerRecordExportDialog.h
       TrackArt.cpp
       TrackArt.h
       TrackArtist.cpp
@@ -352,6 +355,8 @@ list( APPEND SOURCES
       effects/EffectEditor.h
       effects/EffectManager.cpp
       effects/EffectManager.h
+      effects/EffectPreview.cpp
+      effects/EffectPreview.h
       effects/EffectUI.cpp
       $<$<BOOL:${wxIS_MAC}>:effects/EffectUI.mm>
       effects/EffectUI.h
@@ -418,8 +423,6 @@ list( APPEND SOURCES
       effects/ScoreAlignDialog.h
       effects/Silence.cpp
       effects/Silence.h
-      effects/SimpleMono.cpp
-      effects/SimpleMono.h
       effects/SoundTouchEffect.cpp
       effects/SoundTouchEffect.h
       effects/StatefulEffect.cpp
@@ -552,100 +555,40 @@ list( APPEND SOURCES
 
       # Export
 
-      export/Export.cpp
-      export/Export.h
-
-      # Standard exporters
-      export/ExportCL.cpp
-      export/ExportMP3.cpp
-      export/ExportMP3.h
-      export/ExportMultiple.cpp
-      export/ExportMultiple.h
-      export/ExportPCM.cpp
-      export/MP3Prefs.cpp
-
-      # Optional exporters
-      $<$<BOOL:${USE_FFMPEG}>:
-         export/ExportFFmpeg.cpp
-         export/ExportFFmpegDialogs.cpp
-         export/ExportFFmpegDialogs.h
-         export/FFmpegPrefs.cpp
-      >
-
-      $<$<BOOL:${USE_LIBFLAC}>:
-         export/ExportFLAC.cpp
-      >
-
-      $<$<BOOL:${USE_LIBTWOLAME}>:
-         export/ExportMP2.cpp
-      >
-
-      $<$<BOOL:${USE_WAVPACK}>:
-         export/ExportWavPack.cpp
-      >
-
-      $<$<AND:$<BOOL:${USE_LIBOGG}>,$<BOOL:${USE_LIBVORBIS}>>:
-         export/ExportOGG.cpp
-      >
+      export/ExportAudioDialog.cpp
+      export/ExportAudioDialog.h
+      export/ExportFilePanel.cpp
+      export/ExportFilePanel.h
+      export/ExportMixerPanel.cpp
+      export/ExportMixerPanel.h
+      export/ExportMixerDialog.cpp
+      export/ExportMixerDialog.h
+      export/ExportOptionsHandler.cpp
+      export/ExportOptionsHandler.h
+      export/ExportProgressUI.cpp
+      export/ExportProgressUI.h
 
       # Import
 
       import/FormatClassifier.cpp
       import/FormatClassifier.h
-      import/Import.cpp
-      import/Import.h
-      import/ImportForwards.h
+      import/ImportStreamDialog.cpp
+      import/ImportStreamDialog.h
       import/MultiFormatReader.cpp
       import/MultiFormatReader.h
       import/RawAudioGuess.cpp
       import/RawAudioGuess.h
       import/SpecPowerMeter.cpp
       import/SpecPowerMeter.h
-
-      # Standard importers
-
-      import/ImportAUP.cpp
-      import/ImportLOF.cpp
-      import/ImportPCM.cpp
-      import/ImportPlugin.h
-      import/ImportPlugin.cpp
       import/ImportRaw.cpp
       import/ImportRaw.h
 
       # Optional importers
 
-      $<$<BOOL:${USE_FFMPEG}>:
-         import/ImportFFmpeg.cpp
-      >
-
-      $<$<BOOL:${USE_LIBFLAC}>:
-         import/ImportFLAC.cpp
-      >
-
-      $<$<BOOL:${USE_GSTREAMER}>:
-         import/ImportGStreamer.cpp
-      >
-
       $<$<BOOL:${USE_MIDI}>:
          export/ExportMIDI.cpp
          import/ImportMIDI.cpp
          import/ImportMIDI.h
-      >
-
-      $<$<BOOL:${USE_LIBMAD}>:
-         import/ImportMP3_MAD.cpp
-      >
-
-      $<$<BOOL:${USE_LIBMPG123}>:
-         import/ImportMP3_MPG123.cpp
-      >
-
-      $<$<BOOL:${USE_WAVPACK}>:
-         import/ImportWavPack.cpp
-      >
-
-      $<$<AND:$<BOOL:${USE_LIBOGG}>,$<BOOL:${USE_LIBVORBIS}>>:
-         import/ImportOGG.cpp
       >
 
       # Menus
@@ -814,8 +757,16 @@ list( APPEND SOURCES
       tracks/playabletrack/wavetrack/ui/SpectrumVZoomHandle.h
       tracks/playabletrack/wavetrack/ui/SpectrumView.cpp
       tracks/playabletrack/wavetrack/ui/SpectrumView.h
-      tracks/playabletrack/wavetrack/ui/WaveClipTrimHandle.h
-      tracks/playabletrack/wavetrack/ui/WaveClipTrimHandle.cpp
+      tracks/playabletrack/wavetrack/ui/WaveChannelVRulerControls.cpp
+      tracks/playabletrack/wavetrack/ui/WaveChannelVRulerControls.h
+      tracks/playabletrack/wavetrack/ui/WaveChannelVZoomHandle.cpp
+      tracks/playabletrack/wavetrack/ui/WaveChannelVZoomHandle.h
+      tracks/playabletrack/wavetrack/ui/WaveChannelView.cpp
+      tracks/playabletrack/wavetrack/ui/WaveChannelView.h
+      tracks/playabletrack/wavetrack/ui/WaveChannelViewConstants.cpp
+      tracks/playabletrack/wavetrack/ui/WaveChannelViewConstants.h
+      tracks/playabletrack/wavetrack/ui/WaveClipAdjustBorderHandle.h
+      tracks/playabletrack/wavetrack/ui/WaveClipAdjustBorderHandle.cpp
       tracks/playabletrack/wavetrack/ui/WaveClipUtilities.cpp
       tracks/playabletrack/wavetrack/ui/WaveClipUtilities.h
       tracks/playabletrack/wavetrack/ui/WaveTrackAffordanceControls.cpp
@@ -828,14 +779,6 @@ list( APPEND SOURCES
       tracks/playabletrack/wavetrack/ui/WaveTrackShifter.cpp
       tracks/playabletrack/wavetrack/ui/WaveTrackSliderHandles.cpp
       tracks/playabletrack/wavetrack/ui/WaveTrackSliderHandles.h
-      tracks/playabletrack/wavetrack/ui/WaveTrackVRulerControls.cpp
-      tracks/playabletrack/wavetrack/ui/WaveTrackVRulerControls.h
-      tracks/playabletrack/wavetrack/ui/WaveTrackVZoomHandle.cpp
-      tracks/playabletrack/wavetrack/ui/WaveTrackVZoomHandle.h
-      tracks/playabletrack/wavetrack/ui/WaveTrackView.cpp
-      tracks/playabletrack/wavetrack/ui/WaveTrackView.h
-      tracks/playabletrack/wavetrack/ui/WaveTrackViewConstants.cpp
-      tracks/playabletrack/wavetrack/ui/WaveTrackViewConstants.h
       tracks/playabletrack/wavetrack/ui/WaveformVRulerControls.cpp
       tracks/playabletrack/wavetrack/ui/WaveformVRulerControls.h
       tracks/playabletrack/wavetrack/ui/WaveformVZoomHandle.cpp
@@ -866,12 +809,16 @@ list( APPEND SOURCES
       tracks/ui/BrushHandle.h
       tracks/ui/ButtonHandle.cpp
       tracks/ui/ButtonHandle.h
+      tracks/ui/ChannelVRulerControls.cpp
+      tracks/ui/ChannelVRulerControls.h
+      tracks/ui/ChannelView.cpp
+      tracks/ui/ChannelView.h
+      tracks/ui/CommonChannelView.cpp
+      tracks/ui/CommonChannelView.h
       tracks/ui/CommonTrackControls.cpp
       tracks/ui/CommonTrackControls.h
       tracks/ui/CommonTrackPanelCell.cpp
       tracks/ui/CommonTrackPanelCell.h
-      tracks/ui/CommonTrackView.cpp
-      tracks/ui/CommonTrackView.h
       tracks/ui/EditCursorOverlay.cpp
       tracks/ui/EditCursorOverlay.h
       tracks/ui/EnvelopeHandle.cpp
@@ -896,10 +843,6 @@ list( APPEND SOURCES
       tracks/ui/TrackControls.h
       tracks/ui/TrackSelectHandle.cpp
       tracks/ui/TrackSelectHandle.h
-      tracks/ui/TrackVRulerControls.cpp
-      tracks/ui/TrackVRulerControls.h
-      tracks/ui/TrackView.cpp
-      tracks/ui/TrackView.h
       tracks/ui/ZoomHandle.cpp
       tracks/ui/ZoomHandle.h
 
@@ -1107,20 +1050,6 @@ set( LIBRARIES
    PUBLIC
       ${CMAKE_REQUIRED_LIBRARIES}
       ZLIB::ZLIB
-      libmp3lame::libmp3lame
-      SndFile::sndfile
-      $<$<BOOL:${USE_LIBID3TAG}>:libid3tag::libid3tag>
-      $<$<BOOL:${USE_LIBFLAC}>:FLAC::FLAC>
-      $<$<BOOL:${USE_LIBFLAC}>:FLAC::FLAC++>
-      $<$<BOOL:${USE_LIBMAD}>:libmad::libmad>
-      $<$<BOOL:${USE_LIBMPG123}>:mpg123::libmpg123>
-      $<$<BOOL:${USE_WAVPACK}>:wavpack::wavpack>
-      $<$<BOOL:${USE_LIBOGG}>:Ogg::ogg>
-      $<$<BOOL:${USE_LIBVORBIS}>:Vorbis::vorbis>
-      $<$<BOOL:${USE_LIBVORBIS}>:Vorbis::vorbisfile>
-      $<$<BOOL:${USE_LIBVORBIS}>:Vorbis::vorbisenc>
-      $<$<BOOL:${USE_LIBOPUS}>:Opus::opus>
-      $<$<BOOL:${USE_LIBTWOLAME}>:twolame>
       $<$<BOOL:${USE_MIDI}>:portmidi::portmidi>
       $<$<BOOL:${USE_MIDI}>:portsmf>
       $<$<BOOL:${USE_NYQUIST}>:libnyquist>
@@ -1165,10 +1094,6 @@ set( HAVE_GTK ${GTK_FOUND} )
 if( NOT CMAKE_SYSTEM_NAME MATCHES "Windows|Darwin" )
    if( "${${_OPT}use_lame}" STREQUAL "local" )
       set( DISABLE_DYNAMIC_LOADING_LAME YES )
-   endif()
-
-   if( "${${_OPT}use_ffmpeg}" STREQUAL "linked" )
-      set( DISABLE_DYNAMIC_LOADING_FFMPEG YES )
    endif()
 endif()
 
@@ -1328,6 +1253,9 @@ else()
    set( MIMETYPES
       application/x-audacity-project
       application/x-audacity-project+sqlite3
+      audio/basic
+      audio/x-aiff
+      audio/x-wav
    )
    if( USE_FFMPEG )
       list( APPEND MIMETYPES
@@ -1344,16 +1272,9 @@ else()
          audio/x-flac
       )
    endif()
-   if( USE_LIBMAD OR USE_LIBMPG123)
+   if( USE_LIBMPG123)
       list( APPEND MIMETYPES
          audio/mpeg
-      )
-   endif()
-   if( USE_SNDFILE )
-      list( APPEND MIMETYPES
-         audio/basic
-         audio/x-aiff
-         audio/x-wav
       )
    endif()
    if( USE_LIBOGG AND USE_LIBVORBIS )
@@ -1422,6 +1343,11 @@ set( AUDACITY_LIBRARIES
    lib-wx-init-interface
    lib-time-track-interface
    lib-snapping-interface
+   lib-audio-io-interface
+   lib-stretching-sequence-interface
+   lib-import-export-interface
+   lib-export-ui-interface
+   lib-file-formats-interface
 )
 
 if (USE_VST)
@@ -1450,12 +1376,6 @@ endif()
 
 if (USE_AUDIO_UNITS AND wxIS_MAC)
    list(APPEND AUDACITY_LIBRARIES lib-audio-unit-interface)
-endif()
-
-if (${_OPT}use_ffmpeg)
-   list( APPEND AUDACITY_LIBRARIES
-      lib-ffmpeg-support-interface
-   )
 endif()
 
 if ( ${_OPT}has_networking )

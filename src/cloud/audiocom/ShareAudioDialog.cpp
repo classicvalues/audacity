@@ -11,6 +11,7 @@
 #include "ShareAudioDialog.h"
 
 #include <cassert>
+#include <rapidjson/document.h>
 
 #include <wx/bmpbuttn.h>
 #include <wx/button.h>
@@ -35,20 +36,21 @@
 #include "UploadService.h"
 #include "UserService.h"
 
-#include "CloudExportersRegistry.h"
-#include "CloudExporterPlugin.h"
-
 #include "AuthorizationHandler.h"
 #include "LinkAccountDialog.h"
 #include "UserImage.h"
 
 #include "CodeConversions.h"
 
-#include "export/Export.h"
+#include "Export.h"
+#include "export/ExportProgressUI.h"
+#include "ExportUtils.h"
 #include "AccessibleLinksFormatter.h"
+#include "ExportPluginRegistry.h"
 
 #include "WindowAccessible.h"
 #include "HelpSystem.h"
+#include "ProjectRate.h"
 
 #ifdef HAS_CUSTOM_URL_HANDLING
 #include "URLSchemesRegistry.h"
@@ -104,64 +106,65 @@ struct ShareAudioDialog::Services final
    }
 };
 
-// Implementation of the ProgressDialog, which is not a dialog.
-// Instead, progress is forwarded to the parent
-struct ShareAudioDialog::ExportProgressHelper final :
-    public BasicUI::ProgressDialog
+class ShareAudioDialog::ExportProgressUpdater final : public ExportProcessorDelegate
 {
-   explicit ExportProgressHelper(ShareAudioDialog& parent)
-       : mParent(parent)
+public:
+   ExportProgressUpdater(ShareAudioDialog& parent)
+      : mParent(parent)
    {
+      
    }
-
+   
+   ~ExportProgressUpdater() override { }
+   
    void Cancel()
    {
-      mCancelled = true;
+      mCancelled.store(std::memory_order_release);
    }
-
-   bool WasCancelled()
+   
+   ExportResult GetResult() const
    {
-      return mCancelled;
+      return mResult;
    }
 
-   BasicUI::ProgressResult Poll(
-      unsigned long long numerator, unsigned long long denominator,
-      const TranslatableString&) override
+   void SetResult(ExportResult result)
    {
-      mParent.UpdateProgress(numerator, denominator);
-
-      const auto now = Clock::now();
-
-      // Exporter polls in the main thread. To make the dialog responsive
-      // periodic yielding is required
-      if ((now - mLastYield > std::chrono::milliseconds(50)) || (numerator == denominator))
-      {
-         BasicUI::Yield();
-         mLastYield = now;
-      }
-
-      return mCancelled ? BasicUI::ProgressResult::Cancelled :
-                          BasicUI::ProgressResult::Success;
+      mResult = result;
    }
 
-   void SetMessage(const TranslatableString&) override
+   void SetStatusString(const TranslatableString& str) override
    {
    }
 
-   void SetDialogTitle(const TranslatableString&) override
+   bool IsCancelled() const override
    {
+      return mCancelled.load(std::memory_order_acquire);
    }
 
-   void Reinit() override
+   bool IsStopped() const override
    {
+      return false;
+   }
+   
+   void OnProgress(double value) override
+   {
+      mProgress.store(std::memory_order_release);
    }
 
+   void UpdateUI()
+   {
+      constexpr auto ProgressSteps = 1000ull;
+      
+      mParent.UpdateProgress(mProgress.load(std::memory_order_acquire) * ProgressSteps, ProgressSteps);
+   }
+
+private:
+   
    ShareAudioDialog& mParent;
 
-   using Clock = std::chrono::steady_clock;
-   Clock::time_point mLastYield;
-
-   bool mCancelled { false };
+   std::atomic<bool> mCancelled{false};
+   std::atomic<double> mProgress;
+   ExportResult mResult;
 };
 
 ShareAudioDialog::ShareAudioDialog(AudacityProject& project, wxWindow* parent)
@@ -240,20 +243,33 @@ void ShareAudioDialog::Populate(ShuttleGui& s)
 
             mContinueButton = s.AddButton(XXO("C&ontinue"));
             mContinueButton->Bind(wxEVT_BUTTON, [this](auto) { OnContinue(); });
-            mContinueButton->Enable(mIsAuthorised);
          }
          s.EndHorizontalLay();
       }
       s.EndInvisiblePanel();
    }
    s.EndHorizontalLay();
+
+   const auto title = mProject.GetProjectName();
+
+   if (!title.empty())
+   {
+      mInitialStatePanel.trackTitle->SetValue(title);
+      mInitialStatePanel.trackTitle->SetInsertionPoint(title.length());
+   }
+
+   mContinueButton->Enable(mIsAuthorised && mInitialStatePanel.HasValidTitle());
+
+   mInitialStatePanel.trackTitle->Bind(
+      wxEVT_TEXT,
+      [this](auto&) {
+         mContinueButton->Enable(
+            mIsAuthorised && mInitialStatePanel.HasValidTitle());
+      });
 }
 
 void ShareAudioDialog::OnCancel()
 {
-   const auto hasExportStarted = mExportProgressHelper != nullptr;
-   const auto hasUploadStarted = !!mServices->uploadPromise;
-
    if (mInProgress)
    {
       AudacityMessageDialog dlgMessage(
@@ -266,8 +282,8 @@ void ShareAudioDialog::OnCancel()
          return;
 
       // If export has started, notify it that it should be canceled
-      if (mExportProgressHelper != nullptr)
-         static_cast<ExportProgressHelper&>(*mExportProgressHelper).Cancel();
+      if (mExportProgressUpdater)
+         mExportProgressUpdater->Cancel();
    }
 
    
@@ -288,49 +304,15 @@ namespace
 {
 int CalculateChannels(const TrackList& trackList)
 {
-   for (auto track : trackList.Any<const WaveTrack>())
-   {
-      const auto channel = track->GetChannel();
-
-      // Looks like we have a stereo track
-      if (channel == Track::LeftChannel || channel == Track::RightChannel)
-         return 2;
-
-      const auto pan = track->GetPan();
-
-      // We found a mono track with non zero pan
-      // We treat equality in the same way Export
-      if (pan != 0.0)
-         return 2;
-   }
-
-   // All the wave tracks were mono with zero pan
-   return 1;
+   auto range = trackList.Any<const WaveTrack>();
+   return std::all_of(range.begin(), range.end(), [](const WaveTrack *track){
+      return IsMono(*track) && track->GetPan() == 0;
+   }) ? 1 : 2;
 }
 }
 
 wxString ShareAudioDialog::ExportProject()
 {
-   mExportProgressHelper = std::make_unique<ExportProgressHelper>(*this);
-
-   auto exporter = CreatePreferredExporter(GetServiceConfig().GetPreferredAudioFormats(), mProject);
-
-   if (!exporter)
-      return {};
-
-   const auto path = GenerateTempPath(exporter->GetFileExtension());
-
-   if (path.empty())
-      return {};
-   
-
-   SettingScope scope;
-   exporter->OnBeforeExport();
-
-   auto cleanupExporter = finally([&]() { exporter->OnAfterExport(); });
-
-   Exporter e { const_cast<AudacityProject&>(mProject) };
-
    auto& tracks = TrackList::Get(mProject);
 
    const double t0 = 0.0;
@@ -338,21 +320,70 @@ wxString ShareAudioDialog::ExportProject()
 
    const int nChannels = CalculateChannels(tracks);
 
-   const bool success = e.Process(
-      nChannels,                 // numChannels,
-      exporter->GetExporterID(), // type,
-      path,                      // full path,
-      false,                     // selectedOnly,
-      t0,                        // t0
-      t1,                        // t1
-      mExportProgressHelper      // progress dialog
-   );
+   auto hasMimeType = [](const auto&& mimeTypes, const std::string& mimeType)
+   {
+      return std::find(mimeTypes.begin(), mimeTypes.end(), mimeType) != mimeTypes.end();
+   };
 
-   if (!success && wxFileExists(path))
-      // Try to remove the file if exporting has failed (or was canceled)
-      wxRemoveFile(path);
+   const auto& registry = ExportPluginRegistry::Get();
 
-   return success ? path : wxString {};
+   for(const auto& preferredMimeType : GetServiceConfig().GetPreferredAudioFormats())
+   {
+      auto config = GetServiceConfig().GetExportConfig(preferredMimeType);
+      ExportProcessor::Parameters parameters;
+      auto pluginIt = std::find_if(registry.begin(), registry.end(), [&](auto t)
+      {
+         auto [plugin, formatIndex] = t;
+         parameters.clear();
+         return hasMimeType(plugin->GetMimeTypes(formatIndex), preferredMimeType) &&
+            plugin->ParseConfig(formatIndex, config, parameters);
+      });
+
+      if(pluginIt == registry.end())
+         continue;
+
+      const auto [plugin, formatIndex] = *pluginIt;
+
+      const auto formatInfo = plugin->GetFormatInfo(formatIndex);
+      const auto path = GenerateTempPath(formatInfo.extensions[0]);
+
+      if(path.empty())
+         continue;
+
+      mExportProgressUpdater = std::make_unique<ExportProgressUpdater>(*this);
+
+      auto builder = ExportTaskBuilder{}
+         .SetParameters(parameters)
+         .SetNumChannels(nChannels)
+         .SetSampleRate(ProjectRate::Get(mProject).GetRate())
+         .SetPlugin(plugin)
+         .SetFileName(path)
+         .SetRange(t0, t1, false);
+
+      auto result = ExportResult::Error;
+      ExportProgressUI::ExceptionWrappedCall([&]
+      {
+         auto exportTask = builder.Build(mProject);
+
+         auto f = exportTask.get_future();
+         std::thread(std::move(exportTask), std::ref(*mExportProgressUpdater)).detach();
+
+         ExportProgressUI::ExceptionWrappedCall([&]
+         {
+            if(f.wait_for(std::chrono::milliseconds(50)) != std::future_status::ready)
+               mExportProgressUpdater->UpdateUI();
+            result = f.get();
+         });
+      });
+      
+      mExportProgressUpdater->SetResult(result);
+      const auto success = result == ExportResult::Success;
+      if(!success && wxFileExists(path))
+         wxRemoveFile(path);
+      if(success)
+         return path;
+   }
+   return {};
 }
 
 void ShareAudioDialog::StartUploadProcess()
@@ -373,10 +404,10 @@ void ShareAudioDialog::StartUploadProcess()
 
    mFilePath = ExportProject();
 
-   if (mFilePath.empty())
+   if(mFilePath.empty())
    {
-      if (!static_cast<ExportProgressHelper&>(*mExportProgressHelper)
-              .WasCancelled())
+      if(!mExportProgressUpdater ||
+         mExportProgressUpdater->GetResult() != ExportResult::Cancelled)
       {
          HandleExportFailure();
       }
@@ -389,7 +420,7 @@ void ShareAudioDialog::StartUploadProcess()
 
    mServices->uploadPromise = mServices->uploadService.Upload(
       mFilePath,
-      mProject.GetProjectName(),
+      mInitialStatePanel.GetTrackTitle(),
       false,
       [this](const auto& result)
       {
@@ -436,28 +467,8 @@ void ShareAudioDialog::StartUploadProcess()
 void ShareAudioDialog::HandleUploadSucceeded(
    const UploadSuccessfulPayload& payload)
 {
-   mProgressPanel.timePanel->Hide();
-   mProgressPanel.title->SetLabel(XO("Upload complete!").Translation());
-   mProgressPanel.info->Show();
-
-   mProgressPanel.info->SetLabel(
-      "By pressing continue, you will be taken to audio.com and given a shareable link.");
-   mProgressPanel.info->Wrap(mProgressPanel.root->GetSize().GetWidth());
-
-   mContinueAction = [this, slug = std::string(payload.audioSlug)]()
-   {
-      EndModal(wxID_CLOSE);
-      auto url = wxString::Format(
-         "https://audio.com/%s/%s/edit", GetUserService().GetUserSlug(),
-         audacity::ToWXString(slug));
-      
-      OpenInDefaultBrowser(url);
-   };
-
-   mContinueButton->Show();
-
-   Layout();
-   Fit();
+   EndModal(wxID_CLOSE);
+   OpenInDefaultBrowser(wxString { payload.audioUrl });
 }
 
 void ShareAudioDialog::HandleUploadFailed(const UploadFailedPayload& payload)
@@ -466,12 +477,7 @@ void ShareAudioDialog::HandleUploadFailed(const UploadFailedPayload& payload)
 
    TranslatableString message;
 
-   if (payload.status == 401)
-   {
-      message = XO(
-         "We are unable to upload this file. Please try again and make sure to link to your audio.com account before uploading.");
-   }
-   else
+   if (!payload.message.empty())
    {
       auto details = payload.message;
 
@@ -479,6 +485,11 @@ void ShareAudioDialog::HandleUploadFailed(const UploadFailedPayload& payload)
          details += " " + err.second;
       
       message = XO("Error: %s").Format(details);
+   }
+   else
+   {
+      message = XO(
+         "We are unable to upload this file. Please try again and make sure to link to your audio.com account before uploading.");
    }
 
    BasicUI::ShowErrorDialog(
@@ -509,6 +520,8 @@ void ShareAudioDialog::ResetProgress()
    mProgressPanel.progress->SetValue(0);
 
    mLastProgressValue = 0;
+   
+   mExportProgressUpdater.reset();
 
    BasicUI::Yield();
 }
@@ -623,35 +636,43 @@ void ShareAudioDialog::InitialStatePanel::PopulateInitialStatePanel(
       s.SetBorder(0);
 
       s.AddWindow(safenew wxStaticLine { s.GetParent() }, wxEXPAND);
-
-      s.AddSpace(16);
-      s.StartInvisiblePanel();
-      {
-         anonInfoPanel = s.StartInvisiblePanel();
-         {
-            s.SetBorder(30);
             
-            AccessibleLinksFormatter privacyPolicy(XO(
-               "Your audio will be uploaded to our sharing service: %s,%%which requires a free account to use."));
-
-            privacyPolicy.FormatLink(
-               L"%s", XO("audio.com"), "https://audio.com");
-
-            privacyPolicy.FormatLink(
-               L"%%", TranslatableString {},
-               AccessibleLinksFormatter::LinkClickedHandler {});
-
-            privacyPolicy.Populate(s);
-         }
-         s.EndInvisiblePanel();
-
-         authorizedInfoPanel = s.StartInvisiblePanel();
-         s.StartHorizontalLay(wxEXPAND, 1);
+      s.StartInvisiblePanel(16);
+      {
+         s.StartInvisiblePanel();
          {
-            s.AddSpace(30);
-            s.AddFixedText(XO("Press \"Continue\" to upload to audio.com"));
+            s.AddFixedText(XO("Track Title"));
+            s.AddSpace(8);
+            trackTitle = s.AddTextBox({}, {}, 60);
+            trackTitle->SetName(XO("Track Title").Translation());
+            trackTitle->SetFocus();
+            trackTitle->SetMaxLength(100);
+            s.AddSpace(16);
+
+            anonInfoPanel = s.StartInvisiblePanel();
+            {
+               AccessibleLinksFormatter privacyPolicy(XO(
+                  "Your audio will be uploaded to our sharing service: %s,%%which requires a free account to use."));
+
+               privacyPolicy.FormatLink(
+                  L"%s", XO("audio.com"), "https://audio.com");
+
+               privacyPolicy.FormatLink(
+                  L"%%", TranslatableString {},
+                  AccessibleLinksFormatter::LinkClickedHandler {});
+
+               privacyPolicy.Populate(s);
+            }
+            s.EndInvisiblePanel();
+
+            authorizedInfoPanel = s.StartInvisiblePanel();
+            s.StartHorizontalLay(wxEXPAND, 1);
+            {
+               s.AddFixedText(XO("Press \"Continue\" to upload to audio.com"));
+            }
+            s.EndHorizontalLay();
+            s.EndInvisiblePanel();
          }
-         s.EndHorizontalLay();
          s.EndInvisiblePanel();
       }
       s.EndInvisiblePanel();
@@ -675,6 +696,8 @@ void ShareAudioDialog::InitialStatePanel::UpdateUserData()
          rootParent->Layout();
 
          rootParent->Thaw();
+
+         rootParent->Refresh();
       });
 
    auto& oauthService = GetOAuthService();
@@ -714,9 +737,9 @@ void ShareAudioDialog::InitialStatePanel::UpdateUserData()
 
    anonInfoPanel->Hide();
    authorizedInfoPanel->Show();
-  
+
    if (parent.mContinueButton != nullptr)
-      parent.mContinueButton->Enable();
+      parent.mContinueButton->Enable(!trackTitle->GetValue().empty());
 }
 
 void ShareAudioDialog::InitialStatePanel::OnLinkButtonPressed()
@@ -753,6 +776,18 @@ void ShareAudioDialog::InitialStatePanel::SetAnonymousState()
 
    if (parent.mContinueButton != nullptr)
       parent.mContinueButton->Enable(false);
+}
+
+wxString ShareAudioDialog::InitialStatePanel::GetTrackTitle() const
+{
+   wxString ret { trackTitle->GetValue() };
+   ret.Trim(true).Trim(false);
+   return ret;
+}
+
+bool ShareAudioDialog::InitialStatePanel::HasValidTitle() const
+{
+   return !GetTrackTitle().empty();
 }
 
 void ShareAudioDialog::ProgressPanel::PopulateProgressPanel(ShuttleGui& s)

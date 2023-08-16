@@ -367,6 +367,8 @@ void BenchmarkDialog::OnRun( wxCommandEvent & WXUNUSED(event))
       WaveTrackFactory{ mRate,
                     SampleBlockFactory::New( mProject )  }
          .Create(SampleFormat, mRate.GetRate());
+   const auto tmp0 = TrackList::Temporary(nullptr, t, nullptr);
+   assert(t->IsLeader()); // because it's new and not grouped
 
    t->SetRate(1);
 
@@ -448,9 +450,10 @@ void BenchmarkDialog::OnRun( wxCommandEvent & WXUNUSED(event))
          Printf( XO("Cut: %lld - %lld \n")
             .Format( x0 * chunkSize, (x0 + xlen) * chunkSize) );
 
-      Track::Holder tmp;
+      TrackListHolder tmp;
       try {
-         tmp = t->Cut(double (x0 * chunkSize), double ((x0 + xlen) * chunkSize));
+         tmp =
+            t->Cut(double (x0 * chunkSize), double ((x0 + xlen) * chunkSize));
       }
       catch (const AudacityException&) {
          Printf( XO("Trial %d\n").Format( z ) );
@@ -472,7 +475,7 @@ void BenchmarkDialog::OnRun( wxCommandEvent & WXUNUSED(event))
          Printf( XO("Paste: %lld\n").Format( y0 * chunkSize ) );
 
       try {
-         t->Paste((double)(y0 * chunkSize), tmp.get());
+         t->Paste((double)(y0 * chunkSize), *tmp);
       }
       catch (const AudacityException&) {
          Printf( XO("Trial %d\nFailed on Paste.\n").Format( z ) );
@@ -499,7 +502,7 @@ void BenchmarkDialog::OnRun( wxCommandEvent & WXUNUSED(event))
    elapsed = timer.Time();
 
    if (mBlockDetail) {
-      auto seq = t->GetClipByIndex(0)->GetSequence();
+      auto seq = t->GetClipByIndex(0)->GetSequence(0);
       seq->DebugPrintf(seq->GetBlockArray(), seq->GetNumSamples(), &tempStr);
       mToPrint += tempStr;
    }
@@ -523,7 +526,9 @@ void BenchmarkDialog::OnRun( wxCommandEvent & WXUNUSED(event))
    timer.Start();
    for (uint64_t i = 0; i < nChunks; i++) {
       v = small1[i];
-      t->Get((samplePtr)block.get(), SampleFormat, i * chunkSize, chunkSize);
+      auto pBlock = reinterpret_cast<samplePtr>(block.get());
+      constexpr auto backwards = false;
+      t->Get(0, 1, &pBlock, SampleFormat, i * chunkSize, chunkSize, backwards);
       for (uint64_t b = 0; b < chunkSize; b++)
          if (block[b] != v) {
             bad++;
@@ -549,7 +554,9 @@ void BenchmarkDialog::OnRun( wxCommandEvent & WXUNUSED(event))
 
    for (uint64_t i = 0; i < nChunks; i++) {
       v = small1[i];
-      t->Get((samplePtr)block.get(), SampleFormat, i * chunkSize, chunkSize);
+      auto pBlock = reinterpret_cast<samplePtr>(block.get());
+      constexpr auto backwards = false;
+      t->Get(0, 1, &pBlock, SampleFormat, i * chunkSize, chunkSize, backwards);
       for (uint64_t b = 0; b < chunkSize; b++)
          if (block[b] != v)
             bad++;

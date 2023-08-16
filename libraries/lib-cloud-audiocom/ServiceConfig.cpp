@@ -11,6 +11,9 @@
 #include "ServiceConfig.h"
 #include "Languages.h"
 
+#include <rapidjson/document.h>
+#include <stdexcept>
+
 namespace cloud::audiocom
 {
 std::string_view ServiceConfig::GetAPIEndpoint() const
@@ -46,9 +49,15 @@ std::string ServiceConfig::GetAPIUrl(std::string_view apiURI) const
 std::string ServiceConfig::GetFinishUploadPage(
    std::string_view audioID, std::string_view token) const
 {
-   return "http://audio.com/audacity/upload?audioId=" + std::string(audioID) +
+   return "https://audio.com/audacity/upload?audioId=" + std::string(audioID) +
           "&token=" + std::string(token) +
           "&clientId=" + std::string(GetOAuthClientID());
+}
+
+std::string ServiceConfig::GetAudioURL(
+   std::string_view userSlug, std::string_view audioSlug) const
+{
+   return "https://audio.com/" + std::string(userSlug) + "/audio/" + std::string(audioSlug) + "/edit";
 }
 
 std::chrono::milliseconds ServiceConfig::GetProgressCallbackTimeout() const
@@ -56,12 +65,39 @@ std::chrono::milliseconds ServiceConfig::GetProgressCallbackTimeout() const
    return std::chrono::seconds(3);
 }
 
-MimeTypesList ServiceConfig::GetPreferredAudioFormats() const
+std::vector<std::string> ServiceConfig::GetPreferredAudioFormats() const
 {
    return { "audio/x-wavpack", "audio/x-flac", "audio/x-wav" };
 }
 
-MimeType ServiceConfig::GetDownloadMime() const
+rapidjson::Document ServiceConfig::GetExportConfig(const std::string& mimeType) const
+{
+   if(mimeType == "audio/x-wavpack")
+   {
+      rapidjson::Document config;
+      config.SetObject();
+      config.AddMember("quality", rapidjson::Value(2), config.GetAllocator());
+      config.AddMember("bit_rate", rapidjson::Value(40), config.GetAllocator());
+      config.AddMember("bit_depth", 24, config.GetAllocator());
+      config.AddMember("hybrid_mode", false, config.GetAllocator());
+      return config;
+   }
+   if(mimeType == "audio/x-flac")
+   {
+      rapidjson::Document config;
+      config.SetObject();
+      config.AddMember("bit_depth", rapidjson::Value(24), config.GetAllocator());
+      config.AddMember("level", rapidjson::Value(5), config.GetAllocator());
+   }
+   if(mimeType == "audio/x-wav")
+   {
+      return {};
+   }
+   throw std::invalid_argument("unknown mime-type");
+}
+
+
+std::string ServiceConfig::GetDownloadMime() const
 {
    return "audio/x-wav";
 }

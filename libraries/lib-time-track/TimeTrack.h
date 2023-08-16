@@ -19,7 +19,9 @@ class wxRect;
 class BoundedEnvelope;
 struct TrackPanelDrawingContext;
 
-class TIME_TRACK_API TimeTrack final : public Track {
+class TIME_TRACK_API TimeTrack final
+   : public UniqueChannelTrack<>
+{
 
  public:
 
@@ -48,22 +50,19 @@ class TIME_TRACK_API TimeTrack final : public Track {
 
    bool SupportsBasicEditing() const override;
 
-   Holder PasteInto( AudacityProject & ) const override;
+   Track::Holder PasteInto(AudacityProject &project, TrackList &list)
+      const override;
 
-   Holder Cut( double t0, double t1 ) override;
-   Holder Copy( double t0, double t1, bool forClipboard ) const override;
+   TrackListHolder Cut(double t0, double t1) override;
+   TrackListHolder Copy(double t0, double t1, bool forClipboard) const override;
    void Clear(double t0, double t1) override;
-   void Paste(double t, const Track * src) override;
+   void Paste(double t, const Track &src) override;
    void Silence(double t0, double t1) override;
    void InsertSilence(double t, double len) override;
 
    // TimeTrack parameters
 
-   double GetOffset() const override { return 0.0; }
-   void SetOffset(double /* t */) override {}
-
-   double GetStartTime() const override { return 0.0; }
-   double GetEndTime() const override { return 0.0; }
+   void MoveTo(double /* t */) override {}
 
    // XMLTagHandler callback methods for loading and saving
 
@@ -98,8 +97,16 @@ class TIME_TRACK_API TimeTrack final : public Track {
 
    void testMe();
 
- private:
+   size_t NIntervals() const override;
+
+private:
+   std::shared_ptr<WideChannelGroupInterval> DoGetInterval(size_t iInterval)
+      override;
+
    void CleanState();
+
+   void DoOnProjectTempoChange(
+      const std::optional<double>& oldTempo, double newTempo) override;
 
    std::unique_ptr<BoundedEnvelope> mEnvelope;
    bool             mDisplayLog;
@@ -115,7 +122,7 @@ class TIME_TRACK_API TimeTrack final : public Track {
    using Holder = std::unique_ptr<TimeTrack>;
 
 private:
-   Track::Holder Clone() const override;
+   TrackListHolder Clone() const override;
 };
 
 ENUMERATE_TRACK_TYPE(TimeTrack);

@@ -264,14 +264,21 @@ void OnPunchAndRoll(const CommandContext &context)
    bool error = (t1 == 0.0);
 
    double newt1 = t1;
+   using Iterator =
+      ChannelGroup::IntervalIterator<const WideChannelGroupInterval>;
+   IteratorRange<Iterator> intervals{ {}, {} };
    for (const auto &wt : tracks) {
       auto rate = wt->GetRate();
       sampleCount testSample(floor(t1 * rate));
-      auto intervals = wt->GetIntervals();
+      if (wt->IsLeader())
+         intervals = as_const(*wt).Intervals();
+      else
+         // non-leader channel is assumed to have the same intervals
+         ;
       auto pred = [rate](sampleCount testSample){ return
-         [rate, testSample](const Track::Interval &interval){
-            auto start = floor(interval.Start() * rate + 0.5);
-            auto end = floor(interval.End() * rate + 0.5);
+         [rate, testSample](const auto &pInterval){
+            auto start = floor(pInterval->Start() * rate + 0.5);
+            auto end = floor(pInterval->End() * rate + 0.5);
             auto ts = testSample.as_double();
             return ts >= start && ts < end;
          };
@@ -290,7 +297,7 @@ void OnPunchAndRoll(const CommandContext &context)
          // May adjust t1 left
          // Let's ignore the possibility of a clip even shorter than the
          // crossfade duration!
-         newt1 = std::min(newt1, iter->End() - crossFadeDuration);
+         newt1 = std::min(newt1, (*iter).get()->End() - crossFadeDuration);
       }
    }
 
@@ -302,8 +309,10 @@ void OnPunchAndRoll(const CommandContext &context)
    }
 
    t1 = newt1;
+   double endTime{};
    for (const auto &wt : tracks) {
-      const auto endTime = wt->GetEndTime();
+      if (wt->IsLeader())
+         endTime = wt->GetEndTime();
       const auto duration =
          std::max(0.0, std::min(crossFadeDuration, endTime - t1));
       const size_t getLen = floor(duration * wt->GetRate());
@@ -317,25 +326,27 @@ void OnPunchAndRoll(const CommandContext &context)
    }
 
    // Change tracks only after passing the error checks above
-   for (const auto &wt : tracks) {
-      wt->Clear(t1, wt->GetEndTime());
-   }
+   for (const auto &wt : tracks)
+      if (wt->IsLeader())
+         wt->Clear(t1, wt->GetEndTime());
 
    // Choose the tracks for playback.
-   TransportTracks transportTracks;
+   TransportSequences transportTracks;
    const auto duplex = ProjectAudioManager::UseDuplex();
    if (duplex)
       // play all
-      transportTracks = TransportTracks{
-         TrackList::Get( project ), false, true };
+      transportTracks = MakeTransportTracks(
+         TrackList::Get( project ), false, true);
    else
       // play recording tracks only
-      std::copy(tracks.begin(), tracks.end(),
-         std::back_inserter(transportTracks.playbackTracks));
+      for (auto &pTrack : tracks)
+         if (pTrack->IsLeader())
+            transportTracks.playbackSequences.push_back(pTrack);
       
    // Unlike with the usual recording, a track may be chosen both for playback
    // and recording.
-   transportTracks.captureTracks = std::move(tracks);
+   std::copy(tracks.begin(), tracks.end(),
+      back_inserter(transportTracks.captureSequences));
 
    // Try to start recording
    auto options = ProjectAudioIO::GetDefaultOptions(project);

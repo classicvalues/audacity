@@ -13,22 +13,21 @@ Paul Licameli split from Mix.cpp
 #include "BasicUI.h"
 #include "Mix.h"
 #include "RealtimeEffectList.h"
+#include "StretchingSequence.h"
 #include "WaveTrack.h"
 
 using WaveTrackConstArray = std::vector < std::shared_ptr < const WaveTrack > >;
 
 //TODO-MB: wouldn't it make more sense to DELETE the time track after 'mix and render'?
-void MixAndRender(const TrackIterRange<const WaveTrack> &trackRange,
+TrackListHolder MixAndRender(const TrackIterRange<const WaveTrack> &trackRange,
    const Mixer::WarpOptions &warpOptions,
    const wxString &newTrackName,
    WaveTrackFactory *trackFactory,
    double rate, sampleFormat format,
-   double startTime, double endTime,
-   WaveTrack::Holder &uLeft, WaveTrack::Holder &uRight)
+   double startTime, double endTime)
 {
-   uLeft.reset(), uRight.reset();
    if (trackRange.empty())
-      return;
+      return {};
 
    // This function was formerly known as "Quick Mix".
    bool mono = false;   /* flag if output can be mono without losing anything*/
@@ -37,6 +36,7 @@ void MixAndRender(const TrackIterRange<const WaveTrack> &trackRange,
 
    auto first = *trackRange.begin();
    assert(first); // because the range is known to be nonempty
+   assert(first->IsLeader()); // precondition on trackRange
 
    // this only iterates tracks which are relevant to this function, i.e.
    // selected WaveTracks. The tracklist is (confusingly) the list of all
@@ -44,9 +44,9 @@ void MixAndRender(const TrackIterRange<const WaveTrack> &trackRange,
 
    int numWaves = 0; /* number of wave tracks in the selection */
    int numMono = 0;  /* number of mono, centre-panned wave tracks in selection*/
-   for(auto wt : trackRange) {
-      numWaves++;
-      if (wt->GetChannel() == Track::MonoChannel && wt->GetPan() == 0)
+   for (auto wt : trackRange) {
+      numWaves += wt->NChannels();
+      if (IsMono(*wt) && wt->GetPan() == 0)
          numMono++;
    }
 
@@ -66,9 +66,10 @@ void MixAndRender(const TrackIterRange<const WaveTrack> &trackRange,
 
    Mixer::Inputs waveArray;
 
-   for(auto wt : trackRange) {
-      waveArray.emplace_back(
-         wt->SharedPointer<const SampleTrack>(), GetEffectStages(*wt));
+   for (auto wt : trackRange) {
+      const auto stretchingSequence =
+         StretchingSequence::Create(*wt, wt->GetClipInterfaces());
+      waveArray.emplace_back(stretchingSequence, GetEffectStages(*wt));
       tstart = wt->GetStartTime();
       tend = wt->GetEndTime();
       if (tend > mixEndTime)
@@ -99,6 +100,15 @@ void MixAndRender(const TrackIterRange<const WaveTrack> &trackRange,
    // And reset pan and gain
    auto mixLeft =
       first->EmptyCopy(trackFactory->GetSampleBlockFactory(), false);
+
+   // TODO: more-than-two-channels
+
+   decltype(mixLeft) mixRight{};
+   if (!mono)
+      mixRight = trackFactory->Create(format, rate);
+
+   auto result = TrackList::Temporary(nullptr, mixLeft, mixRight);
+
    mixLeft->SetPan(0);
    mixLeft->SetGain(1);
    mixLeft->SetRate(rate);
@@ -108,15 +118,7 @@ void MixAndRender(const TrackIterRange<const WaveTrack> &trackRange,
    else
       /* i18n-hint: noun, means a track, made by mixing other tracks */
       mixLeft->SetName(newTrackName);
-   mixLeft->SetOffset(mixStartTime);
-
-   // TODO: more-than-two-channels
-   decltype(mixLeft) mixRight{};
-   if (!mono) {
-      mixRight = trackFactory->Create(format, rate);
-      mixRight->SetOffset(mixStartTime);
-   }
-
+   mixLeft->MoveTo(mixStartTime);
 
    auto maxBlockLen = mixLeft->GetIdealBlockSize();
 
@@ -163,14 +165,10 @@ void MixAndRender(const TrackIterRange<const WaveTrack> &trackRange,
    }
 
    mixLeft->Flush();
-   if (!mono)
-      mixRight->Flush();
-   if (updateResult == ProgressResult::Cancelled || updateResult == ProgressResult::Failed)
-   {
-      return;
-   }
+   if (updateResult == ProgressResult::Cancelled ||
+       updateResult == ProgressResult::Failed)
+      return {};
    else {
-      uLeft = mixLeft, uRight = mixRight;
 #if 0
    int elapsedMS = wxGetElapsedTime();
    double elapsedTime = elapsedMS * 0.001;
@@ -184,10 +182,12 @@ void MixAndRender(const TrackIterRange<const WaveTrack> &trackRange,
    wxPrintf("Max number of tracks to mix in real time: %f\n", maxTracks);
 #endif
 
-      for (auto pTrack : { uLeft.get(), uRight.get() })
+      for (auto pTrack : { mixLeft, mixRight })
          if (pTrack)
             RealtimeEffectList::Get(*pTrack).Clear();
    }
+
+   return result;
 }
 
 #include "RealtimeEffectList.h"

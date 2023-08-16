@@ -35,6 +35,7 @@
 #include "Equalization.h"
 #include "EqualizationUI.h"
 #include "EffectEditor.h"
+#include "EffectOutputTracks.h"
 #include "LoadEffects.h"
 #include "PasteOverPreservingClips.h"
 #include "ShuttleGui.h"
@@ -114,7 +115,7 @@ EffectEqualization::EffectEqualization(int Options)
 #if 0
    auto trackList = inputTracks();
    const auto t = trackList
-      ? *trackList->Any< const WaveTrack >().first
+      ? *trackList->Any<const WaveTrack>().first
       : nullptr
    ;
    hiFreq =
@@ -322,7 +323,8 @@ bool EffectEqualization::Init()
    double rate = 0.0;
 
    if (const auto project = FindProject()) {
-      auto trackRange = TrackList::Get(*project).Selected<const WaveTrack>();
+      auto trackRange =
+         TrackList::Get(*project).Selected<const WaveTrack>();
       if (trackRange) {
          rate = (*(trackRange.first++)) -> GetRate();
          ++selcount;
@@ -362,14 +364,51 @@ bool EffectEqualization::Init()
    return(true);
 }
 
+struct EffectEqualization::Task {
+   Task(size_t M, size_t idealBlockLen, WaveTrack &track)
+      : buffer{ idealBlockLen }
+      , idealBlockLen{ idealBlockLen }
+      , output{ track }
+      , leftTailRemaining{ (M - 1) / 2 }
+   {
+      memset(lastWindow, 0, windowSize * sizeof(float));
+   }
+
+   void AccumulateSamples(constSamplePtr buffer, size_t len)
+   {
+      auto leftTail = std::min(len, leftTailRemaining);
+      leftTailRemaining -= leftTail;
+      len -= leftTail;
+      buffer += leftTail * sizeof(float);
+      output.Append(buffer, floatSample, len);
+   }
+
+   static constexpr auto windowSize = EqualizationFilter::windowSize;
+   Floats window1{ windowSize };
+   Floats window2{ windowSize };
+
+   Floats buffer;
+   const size_t idealBlockLen;
+
+   // These pointers are swapped after each FFT window
+   float *thisWindow{ window1.get() };
+   float *lastWindow{ window2.get() };
+
+   // a new WaveTrack to hold all of the output,
+   // including 'tails' each end
+   WaveTrack &output;
+
+   size_t leftTailRemaining;
+};
+
 bool EffectEqualization::Process(EffectInstance &, EffectSettings &)
 {
-   this->CopyInputTracks(); // Set up mOutputTracks.
+   EffectOutputTracks outputs{ *mTracks };
    mParameters.CalcFilter();
    bool bGoodResult = true;
 
    int count = 0;
-   for( auto track : mOutputTracks->Selected< WaveTrack >() ) {
+   for (auto track : outputs.Get().Selected<WaveTrack>()) {
       double trackStart = track->GetStartTime();
       double trackEnd = track->GetEndTime();
       double t0 = mT0 < trackStart? trackStart: mT0;
@@ -379,18 +418,47 @@ bool EffectEqualization::Process(EffectInstance &, EffectSettings &)
          auto start = track->TimeToLongSamples(t0);
          auto end = track->TimeToLongSamples(t1);
          auto len = end - start;
+         const auto data = CollectClipData(*track, start, len);
 
-         if (!ProcessOne(count, track, start, len))
-         {
-            bGoodResult = false;
-            break;
+         auto temp = TrackList::Create(nullptr);
+         for (const auto pChannel : TrackList::Channels(track)) {
+            auto pNewChannel = pChannel->EmptyCopy();
+            temp->Add(pNewChannel);
+            assert(pNewChannel->IsLeader() == pChannel->IsLeader());
          }
+         auto pTempTrack = *temp->Any<WaveTrack>().begin();
+         pTempTrack->ConvertToSampleFormat(floatSample);
+         auto iter0 = TrackList::Channels(pTempTrack).begin();
+   
+         for (const auto pChannel : TrackList::Channels(track)) {
+            constexpr auto windowSize = EqualizationFilter::windowSize;
+            const auto &M = mParameters.mM;
+
+            wxASSERT(M - 1 < windowSize);
+            size_t L = windowSize - (M - 1);   //Process L samples at a go
+            auto s = start;
+            auto idealBlockLen = pChannel->GetMaxBlockSize() * 4;
+            if (idealBlockLen % L != 0)
+               idealBlockLen += (L - (idealBlockLen % L));
+            auto pNewChannel = *iter0++;
+            Task task{ M, idealBlockLen, *pNewChannel };
+
+            bGoodResult = ProcessOne(task, count, *pChannel, start, len);
+            if (!bGoodResult)
+               goto done;
+         }
+         pTempTrack->Flush();
+         PasteOverPreservingClips(data, *track, start, len,
+            **temp->Any<WaveTrack>().begin());
       }
 
       count++;
    }
+   done:
 
-   this->ReplaceProcessedTracks(bGoodResult);
+   if (bGoodResult)
+      outputs.Commit();
+
    return bGoodResult;
 }
 
@@ -410,47 +478,10 @@ bool EffectEqualization::TransferDataToWindow(const EffectSettings &settings)
    return mUI.TransferDataToWindow(settings);
 }
 
-namespace {
-struct EqualizationTask {
-   EqualizationTask( size_t M, size_t idealBlockLen, WaveTrack &t )
-      : buffer{ idealBlockLen }
-      , output{ t.EmptyCopy() }
-      , leftTailRemaining{ (M - 1) / 2 }
-   {
-      memset(lastWindow, 0, windowSize * sizeof(float));
-   }
-
-   void AccumulateSamples(constSamplePtr buffer, size_t len)
-   {
-      auto leftTail = std::min(len, leftTailRemaining);
-      leftTailRemaining -= leftTail;
-      len -= leftTail;
-      buffer += leftTail * sizeof(float);
-      output->Append(buffer, floatSample, len);
-   }
-
-   static constexpr auto windowSize = EqualizationFilter::windowSize;
-   Floats window1{ windowSize };
-   Floats window2{ windowSize };
-
-   Floats buffer;
-
-   // These pointers are swapped after each FFT window
-   float *thisWindow{ window1.get() };
-   float *lastWindow{ window2.get() };
-
-   // create a NEW WaveTrack to hold all of the output,
-   // including 'tails' each end
-   std::shared_ptr<WaveTrack> output;
-
-   size_t leftTailRemaining;
-};
-}
-
 // EffectEqualization implementation
 
-bool EffectEqualization::ProcessOne(int count, WaveTrack * t,
-                                    sampleCount start, sampleCount len)
+bool EffectEqualization::ProcessOne(Task &task,
+   int count, const WaveTrack &t, sampleCount start, sampleCount len)
 {
    constexpr auto windowSize = EqualizationFilter::windowSize;
 
@@ -459,11 +490,7 @@ bool EffectEqualization::ProcessOne(int count, WaveTrack * t,
    wxASSERT(M - 1 < windowSize);
    size_t L = windowSize - (M - 1);   //Process L samples at a go
    auto s = start;
-   auto idealBlockLen = t->GetMaxBlockSize() * 4;
-   if (idealBlockLen % L != 0)
-      idealBlockLen += (L - (idealBlockLen % L));
 
-   EqualizationTask task{ M, idealBlockLen, *t };
    auto &buffer = task.buffer;
    auto &window1 = task.window1;
    auto &window2 = task.window2;
@@ -473,7 +500,6 @@ bool EffectEqualization::ProcessOne(int count, WaveTrack * t,
    auto originalLen = len;
 
    auto &output = task.output;
-   t->ConvertToSampleFormat( floatSample );
 
    TrackProgress(count, 0.);
    bool bLoopSuccess = true;
@@ -481,9 +507,9 @@ bool EffectEqualization::ProcessOne(int count, WaveTrack * t,
 
    while (len != 0)
    {
-      auto block = limitSampleBufferSize( idealBlockLen, len );
+      auto block = limitSampleBufferSize( task.idealBlockLen, len );
 
-      t->GetFloats(buffer.get(), s, block);
+      t.GetFloats(buffer.get(), s, block);
 
       for(size_t i = 0; i < block; i += L)   //go through block in lumps of length L
       {
@@ -516,8 +542,7 @@ bool EffectEqualization::ProcessOne(int count, WaveTrack * t,
       }
    }
 
-   if(bLoopSuccess)
-   {
+   if (bLoopSuccess) {
       // M-1 samples of 'tail' left in lastWindow, get them now
       if(wcopy < (M - 1)) {
          // Still have some overlap left to process
@@ -534,11 +559,6 @@ bool EffectEqualization::ProcessOne(int count, WaveTrack * t,
             buffer[j] = lastWindow[wcopy + j];
       }
       task.AccumulateSamples((samplePtr)buffer.get(), M - 1);
-      output->Flush();
    }
-
-   if (bLoopSuccess)
-      PasteOverPreservingClips(*t, start, originalLen, *output);
-
    return bLoopSuccess;
 }

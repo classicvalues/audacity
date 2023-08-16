@@ -29,9 +29,19 @@ public:
    static SelectionState &Get( AudacityProject &project );
    static const SelectionState &Get( const AudacityProject &project );
 
-   static void SelectTrackLength
-      ( ViewInfo &viewInfo, Track &track, bool syncLocked );
+   /*!
+    Set selection length to the length of a track -- but if sync-lock is turned
+    on, use the largest possible selection in the sync-lock group.
+    If it's a stereo track, do the same for the stereo channels.
 
+    @pre `track.IsLeader()`
+    */
+   static void SelectTrackLength(
+      ViewInfo &viewInfo, Track &track, bool syncLocked);
+
+   /*!
+    @pre `track.IsLeader()`
+    */
    void SelectTrack(
       Track &track, bool selected, bool updateLastPicked );
    // Inclusive range of tracks, the limits specified in either order:
@@ -40,13 +50,19 @@ public:
    void SelectNone( TrackList &tracks );
    void ChangeSelectionOnShiftClick
       ( TrackList &tracks, Track &track );
-   void HandleListSelection
-      ( TrackList &tracks, ViewInfo &viewInfo, Track &track,
-        bool shift, bool ctrl, bool syncLocked );
+   /*!
+    @pre `track.IsLeader()`
+    */
+   void HandleListSelection(TrackList &tracks, ViewInfo &viewInfo,
+      Track &track, bool shift, bool ctrl, bool syncLocked);
 
 private:
    friend class SelectionStateChanger;
 
+   /*!
+    @invariant `mLastPickedTrack.expired() ||
+       mLastPickedTrack.lock()->IsLeader()`
+    */
    std::weak_ptr<Track> mLastPickedTrack;
 };
 

@@ -751,7 +751,7 @@ wxRect ScreenshotCommand::GetTrackRect( AudacityProject * pProj, TrackPanel * pa
    };
 
    int count = 0;
-   for (auto t : TrackList::Get( *pProj ).Leaders()) {
+   for (auto t : TrackList::Get( *pProj )) {
       count +=  1;
       if( count > n )
       {
@@ -785,7 +785,7 @@ bool ScreenshotCommand::Apply(const CommandContext & context)
    TrackPanel *panel = &TrackPanel::Get( context.project );
    AdornedRulerPanel *ruler = panel->GetRuler();
 
-   int nTracks = TrackList::Get( context.project ).size();
+   int nTracks = TrackList::Get(context.project).Size();
 
    int x1,y1,x2,y2;
    w->ClientToScreen(&x1, &y1);

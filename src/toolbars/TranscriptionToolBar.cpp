@@ -323,8 +323,8 @@ void TranscriptionToolBar::EnableDisableButtons()
    bool recording = gAudioIO->GetNumCaptureChannels() > 0;
 
    // Only interested in audio type tracks
-   bool tracks = p && TrackList::Get( *p ).Any<AudioTrack>(); // PRL:  PlayableTrack ?
-   SetEnabled( canStopAudioStream && tracks && !recording );
+   bool tracks = p && TrackList::Get(*p).Any<AudioTrack>(); // PRL:  PlayableTrack ?
+   SetEnabled(canStopAudioStream && tracks && !recording);
 
 #ifdef EXPERIMENTAL_VOICE_DETECTION
    if (!p)
@@ -464,10 +464,10 @@ void TranscriptionToolBar::GetSamples(
    double start = selectedRegion.t0();
    double end = selectedRegion.t1();
 
-   auto ss0 = sampleCount( (start - t->GetOffset()) * t->GetRate() );
-   auto ss1 = sampleCount( (end - t->GetOffset()) * t->GetRate() );
+   auto ss0 = sampleCount( (start - t->GetStartTime()) * t->GetRate() );
+   auto ss1 = sampleCount( (end - t->GetStartTime()) * t->GetRate() );
 
-   if (start < t->GetOffset()) {
+   if (start < t->GetStartTime()) {
       ss0 = 0;
    }
 
@@ -506,7 +506,7 @@ void TranscriptionToolBar::PlayAtSpeed(bool newDefault, bool cutPreview)
    // VariSpeed play reuses Scrubbing.
    bool bFixedSpeedPlay = !gPrefs->ReadBool(wxT("/AudioIO/VariSpeedPlay"), true);
    // Scrubbing doesn't support note tracks, but the fixed-speed method using time tracks does.
-   if ( TrackList::Get( *p ).Any< NoteTrack >() )
+   if (TrackList::Get(*p).Any<NoteTrack>())
       bFixedSpeedPlay = true;
 
    // If cutPreview, we have to fall back to fixed speed.
@@ -742,7 +742,7 @@ void TranscriptionToolBar::OnSelectSound(wxCommandEvent & WXUNUSED(event))
    mVk->AdjustThreshold(GetSensitivity());
 
 
-   TrackList *tl = &TrackList::Get( mProject );
+   TrackList *tl = &TrackList::Get(mProject);
    if(auto wt = *tl->Any<const WaveTrack>().begin()) {
       sampleCount start, len;
       GetSamples(wt, &start, &len);
@@ -772,7 +772,7 @@ void TranscriptionToolBar::OnSelectSilence(wxCommandEvent & WXUNUSED(event))
 
    //If IO is busy, abort immediately
    auto gAudioIO = AudioIOBase::Get();
-   if (gAudioIO->IsBusy()){
+   if (gAudioIO->IsBusy()) {
       SetButton(false,mButtons[TTB_SelectSilence]);
       return;
    }
@@ -780,8 +780,8 @@ void TranscriptionToolBar::OnSelectSilence(wxCommandEvent & WXUNUSED(event))
    mVk->AdjustThreshold(GetSensitivity());
 
 
-   TrackList *tl = &TrackList::Get( mProject );
-   if(auto wt = *tl->Any<const WaveTrack>().begin()) {
+   TrackList *tl = &TrackList::Get(mProject);
+   if (auto wt = *tl->Any<const WaveTrack>().begin()) {
       sampleCount start, len;
       GetSamples(wt, &start, &len);
 
@@ -885,10 +885,7 @@ int DoAddLabel(
 //   SelectNone();
    lt->SetSelected(true);
 
-   int index;
-   int focusTrackNumber = -1;
-   index =
-      LabelTrackView::Get( *lt ).AddLabel(region, title, focusTrackNumber);
+   auto index = LabelTrackView::Get(*lt).AddLabel(region, title);
 
    ProjectHistory::Get( project )
       .PushState(XO("Added label"), XO("Label"));

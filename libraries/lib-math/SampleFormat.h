@@ -56,10 +56,10 @@ using samplePtr = char *;
 using constSamplePtr = const char *;
 
 // Used to determine how to fill in empty areas of audio.
-typedef enum {
+typedef enum class FillFormat {
    fillZero = 0,
    fillTwo = 2
-}fillFormat;
+} fillFormat;
 
 /** \brief Return the size on disk of one uncompressed sample (bytes) */
 #define SAMPLE_SIZE_DISK(SampleFormat) (((SampleFormat) == int24Sample) ? \
@@ -103,6 +103,17 @@ private:
    sampleFormat m_Effective;
    sampleFormat m_Stored;
 };
+
+inline bool operator == (SampleFormats a, SampleFormats b)
+{
+   return a.Effective() == b.Effective() &&
+      a.Stored() == b.Stored();
+}
+
+inline bool operator != (SampleFormats a, SampleFormats b)
+{
+   return !(a == b);
+}
 
 //
 // Allocating/Freeing Samples

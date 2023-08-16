@@ -38,9 +38,11 @@
 
 
 #include "NoiseReduction.h"
+#include "EffectOutputTracks.h"
 
 #include "LoadEffects.h"
 #include "EffectManager.h"
+#include "EffectPreview.h"
 #include "EffectUI.h"
 
 #include "ShuttleGui.h"
@@ -440,7 +442,7 @@ EffectType EffectNoiseReduction::GetType() const
  its unusual two-pass nature.  First choose and analyze an example of noise,
  then apply noise reduction to another selection.  That is difficult to fit into
  the framework for managing settings of other effects. */
-int EffectNoiseReduction::ShowHostInterface(EffectPlugin &,
+int EffectNoiseReduction::ShowHostInterface(EffectBase &,
    wxWindow &parent, const EffectDialogFactory &,
    std::shared_ptr<EffectInstance> &pInstance, EffectSettingsAccess &access,
    bool forceModal)
@@ -619,9 +621,9 @@ bool EffectNoiseReduction::Process(EffectInstance &, EffectSettings &)
 {
    // This same code will either reduce noise or profile it
 
-   this->CopyInputTracks(); // Set up mOutputTracks.
+   EffectOutputTracks outputs{ *mTracks };
 
-   auto track = * (mOutputTracks->Selected< const WaveTrack >()).begin();
+   auto track = *(outputs.Get().Selected<const WaveTrack>()).begin();
    if (!track)
       return false;
 
@@ -679,14 +681,16 @@ bool EffectNoiseReduction::Process(EffectInstance &, EffectSettings &)
       , mF0, mF1
 #endif
    };
-   bool bGoodResult = worker.Process(*mOutputTracks, mT0, mT1);
+   bool bGoodResult = worker.Process(outputs.Get(), mT0, mT1);
    if (mSettings->mDoProfile) {
       if (bGoodResult)
          mSettings->mDoProfile = false; // So that "repeat last effect" will reduce noise
       else
          mStatistics.reset(); // So that profiling must be done again before noise reduction
    }
-   this->ReplaceProcessedTracks(bGoodResult);
+   if (bGoodResult)
+      outputs.Commit();
+
    return bGoodResult;
 }
 
@@ -698,7 +702,7 @@ bool EffectNoiseReduction::Worker::Process(
    TrackList &tracks, double inT0, double inT1)
 {
    mProgressTrackCount = 0;
-   for ( auto track : tracks.Selected< WaveTrack >() ) {
+   for (auto track : tracks.Selected<WaveTrack>()) {
       mProgressWindowCount = 0;
       if (track->GetRate() != mStatistics.mRate) {
          if (mDoProfile)
@@ -730,11 +734,26 @@ bool EffectNoiseReduction::Worker::Process(
          else
             mLen += extra;
 
-         if (!TrackSpectrumTransformer::Process(
-            Processor, track, mHistoryLen, start, len ))
-            return false;
+         auto t0 = track->LongSamplesToTime(start);
+         auto tLen = track->LongSamplesToTime(len);
+         auto tempList = TrackList::Create(nullptr);
+         for (const auto pChannel : TrackList::Channels(track)) {
+            if (!TrackSpectrumTransformer::Process(
+               Processor, pChannel, mHistoryLen, start, len))
+               return false;
+            if (mOutputTrack) {
+               tempList->Add(mOutputTrack);
+               assert(mOutputTrack->IsLeader() == pChannel->IsLeader());
+               mOutputTrack.reset();
+            }
+            ++mProgressTrackCount;
+         }
+         if (tempList->Size()) {
+            const auto pTrack = *tempList->Any<WaveTrack>().begin();
+            TrackSpectrumTransformer::PostProcess(*pTrack, len);
+            track->ClearAndPaste(t0, t0 + tLen, *tempList, true, false);
+         }
       }
-      ++mProgressTrackCount;
    }
 
    if (mDoProfile) {
@@ -1481,7 +1500,7 @@ void EffectNoiseReduction::Dialog::OnPreview(wxCommandEvent & WXUNUSED(event))
    *m_pSettings = mTempSettings;
    m_pSettings->mDoProfile = false;
 
-   m_pEffect->Preview(mAccess,
+   EffectPreview(*m_pEffect, mAccess,
       // Don't need any UI updates for preview
       {},
       false);

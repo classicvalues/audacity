@@ -69,8 +69,8 @@ UIHandle::Result LabelDefaultClickHandle::Click
       SaveState( pProject );
 
       const auto pLT = evt.pCell.get();
-      for (auto lt : TrackList::Get( *pProject ).Any<LabelTrack>()) {
-         if (pLT != &TrackView::Get( *lt )) {
+      for (auto lt : TrackList::Get(*pProject).Any<LabelTrack>()) {
+         if (pLT != &ChannelView::Get(*lt)) {
             auto &view = LabelTrackView::Get( *lt );
             view.ResetFlags();
          }
